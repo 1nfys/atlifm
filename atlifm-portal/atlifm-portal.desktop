@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=atlifm Portal
+Comment=XDG Desktop Portal FileChooser backend for atlifm
+Exec=atlifm --portal
+Icon=atlifm
+Terminal=false
+Type=Application
+NoDisplay=true
+StartupNotify=true
+StartupWMClass=atlifm

@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="atlifm.png">atlifm-logo/atlifm.png</file>
+    </qresource>
+</RCC>
