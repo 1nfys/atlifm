@@ -150,7 +150,6 @@ jobs:
           cd "$OBS_PROJECT/$OBS_PACKAGE"
           rm -f -- ./*.tar.gz ./*.tar.xz ./*.tar.bz2 ./*.dsc ./*.changes
           rpm2cpio "$GITHUB_WORKSPACE"/sources/*.src.rpm | cpio -idmu 2>/dev/null
-          # spec берём из репозитория, чтобы правки упаковки доезжали без пересборки релиза
           cp "$GITHUB_WORKSPACE/packaging/rpm/atlifm.spec" .
           cp "$GITHUB_WORKSPACE"/sources/*.dsc "$GITHUB_WORKSPACE"/sources/*.orig.tar.gz \
              "$GITHUB_WORKSPACE"/sources/*.debian.tar.* .

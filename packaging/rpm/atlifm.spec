@@ -1,7 +1,3 @@
-# прим: обычная сборка в дистрибутиве генерирует debuginfo. минимальные
-# песочницы без утилиты find-debuginfo могут отключить его, определив
-# debug_package nil.
-
 Name:           atlifm
 Version:        1.0.0
 Release:        1%{?dist}
@@ -45,11 +41,7 @@ C++ plugins).
 %setup -q
 
 %build
-# макросы cmake и cmake_build это канонический путь на Fedora и openSUSE.
-# запасной вариант оставляет spec собираемым в минимальных rpm-песочницах,
-# где нет rpm-макросов cmake.
 %if 0%{?cmake:1}
-# openSUSE %cmake_build вызывает make, поэтому Ninja задаём только вне openSUSE.
 %if 0%{?suse_version}
 %cmake -DCMAKE_BUILD_TYPE=Release
 %else
