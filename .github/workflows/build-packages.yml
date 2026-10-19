@@ -64,7 +64,8 @@ jobs:
         run: |
           cp build/*.deb build/*.changes out/ 2>/dev/null || true
           cp build/src/*.dsc build/src/*.orig.tar.gz \
-             build/src/*.debian.tar.xz build/src/*.changes out/ 2>/dev/null || true
+             build/src/*.debian.tar.xz build/src/*.changes \
+             build/src/*.buildinfo out/ 2>/dev/null || true
           ls -la out
 
       - uses: actions/upload-artifact@v4

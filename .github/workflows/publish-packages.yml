@@ -187,6 +187,7 @@ jobs:
             --pattern '*.dsc' \
             --pattern '*.orig.tar.gz' \
             --pattern '*.debian.tar.*' \
+            --pattern '*.buildinfo' \
             --pattern '*_source.changes'
 
       - name: Unlock the signing key
