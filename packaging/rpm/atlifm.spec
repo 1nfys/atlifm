@@ -23,6 +23,7 @@ BuildRequires:  ninja-build
 %endif
 BuildRequires:  gcc-c++
 BuildRequires:  desktop-file-utils
+BuildRequires:  hicolor-icon-theme
 Requires:       hicolor-icon-theme
 
 %description
@@ -73,12 +74,15 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/atlifm-portal.desktop
 
 %files
 %{_bindir}/atlifm
+%dir %{_includedir}/atlifm
 %{_includedir}/atlifm/atlifm-plugin-api.h
 %{_datadir}/applications/atlifm.desktop
 %{_datadir}/applications/atlifm-portal.desktop
 %{_datadir}/dbus-1/services/org.freedesktop.impl.portal.desktop.atlifm.service
 %{_datadir}/icons/hicolor/*/apps/atlifm.png
 %{_datadir}/metainfo/atlifm.metainfo.xml
+%dir %{_datadir}/xdg-desktop-portal
+%dir %{_datadir}/xdg-desktop-portal/portals
 %{_datadir}/xdg-desktop-portal/portals/atlifm.portal
 %{_datadir}/xdg-desktop-portal/hyprland-portals.conf
 %{_mandir}/man1/atlifm.1*
