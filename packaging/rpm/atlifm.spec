@@ -49,7 +49,12 @@ C++ plugins).
 # запасной вариант оставляет spec собираемым в минимальных rpm-песочницах,
 # где нет rpm-макросов cmake.
 %if 0%{?cmake:1}
+# openSUSE %cmake_build вызывает make, поэтому Ninja задаём только вне openSUSE.
+%if 0%{?suse_version}
+%cmake -DCMAKE_BUILD_TYPE=Release
+%else
 %cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+%endif
 %cmake_build
 %else
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
