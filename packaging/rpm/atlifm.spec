@@ -41,7 +41,7 @@ C++ plugins).
 %setup -q
 
 %build
-# %cmake / %cmake_build это канонический путь на Fedora и openSUSE.
+# макросы cmake и cmake_build это канонический путь на Fedora и openSUSE.
 # запасной вариант оставляет spec собираемым в минимальных rpm-песочницах,
 # где нет rpm-макросов cmake.
 %if 0%{?cmake:1}

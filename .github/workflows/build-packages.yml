@@ -148,7 +148,6 @@ jobs:
   alpine:
     name: "apk (${{ matrix.arch }})"
     runs-on: ${{ matrix.runner }}
-    container: alpine:3.22
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -157,32 +156,36 @@ jobs:
           - { runner: ubuntu-latest, arch: x86_64 }
           - { runner: ubuntu-24.04-arm, arch: aarch64 }
     steps:
-      - name: Install dependencies
-        run: |
-          apk add --no-cache git ca-certificates curl tar gzip \
-            build-base cmake samurai qt6-qtbase-dev qt6-qtsvg-dev abuild
-
       - uses: actions/checkout@v4
 
       - name: Build package
         run: |
-          mkdir -p out
-          sh packaging/scripts/make-src-tarball.sh . packaging/alpine >/dev/null
-          abuild-keygen -a -n || true
-          key=$(find /root/.abuild -name '*.rsa' 2>/dev/null | head -n1)
-          if [ -n "$key" ]; then
-            echo "PACKAGER_PRIVKEY=$key" >> /etc/abuild.conf
-            cp "$key.pub" /etc/apk/keys/ 2>/dev/null || true
-          fi
-          cd "$GITHUB_WORKSPACE/packaging/alpine"
-          abuild -F checksum
-          abuild -F -r -P /tmp/packages
-          find /tmp/packages -name '*.apk' | while read -r f; do
-            cp "$f" "$GITHUB_WORKSPACE/out/$(basename "$f" .apk)-${{ matrix.arch }}.apk"
-          done
-          ls -la "$GITHUB_WORKSPACE/out"
-        env:
-          PACKAGER: "1nfys <lifawafla@gmail.com>"
+          # alpine собирается внутри docker: JS-actions (checkout и
+          # upload-artifact) не работают в alpine-контейнере на arm64.
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            -e HOME=/root \
+            -e "PACKAGER=1nfys <lifawafla@gmail.com>" \
+            alpine:3.22 sh -eu -c '
+              apk add --no-cache git ca-certificates curl tar gzip \
+                build-base cmake samurai qt6-qtbase-dev qt6-qtsvg-dev abuild
+              mkdir -p out
+              sh packaging/scripts/make-src-tarball.sh . packaging/alpine >/dev/null
+              abuild-keygen -a -n
+              key=$(find "$HOME/.abuild" -name "*.rsa" 2>/dev/null | head -n1)
+              if [ -n "$key" ]; then
+                echo "PACKAGER_PRIVKEY=$key" >> /etc/abuild.conf
+                cp "$key.pub" /etc/apk/keys/ 2>/dev/null || true
+              fi
+              cd packaging/alpine
+              abuild -F checksum
+              abuild -F -r -P /tmp/packages
+              find /tmp/packages -name "*.apk" | while read -r f; do
+                cp "$f" "/work/out/$(basename "$f" .apk)-${{ matrix.arch }}.apk"
+              done
+              ls -la /work/out
+            '
 
       - uses: actions/upload-artifact@v4
         with:
@@ -251,7 +254,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             git ca-certificates curl tar gzip \
             build-essential cmake ninja-build \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-wayland \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins qt6-wayland \
             file patchelf zstd
 
       - uses: actions/checkout@v4

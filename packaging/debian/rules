@@ -18,3 +18,5 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/atlifm
 	install -Dm644 debian/atlifm.metainfo.xml \
 		debian/atlifm/usr/share/metainfo/atlifm.metainfo.xml
+	install -Dm644 debian/atlifm.1 \
+		debian/atlifm/usr/share/man/man1/atlifm.1

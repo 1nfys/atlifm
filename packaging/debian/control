@@ -17,6 +17,7 @@ Rules-Requires-Root: no
 Package: atlifm
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: qt6-svg-plugins
 Description: terminal-style file manager with a GUI mouse-first workflow
  atlifm is a mouse-first file manager that keeps a terminal aesthetic:
  a multi-pane (Miller columns) layout, monospace font and no animations,

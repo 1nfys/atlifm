@@ -164,7 +164,7 @@ toolchain or powerful PC is needed:
 | `deb` | `.deb` + Debian source package | `debian:13` container, canonical `dpkg-buildpackage` |
 | `rpm` | `.rpm` + `.src.rpm` | fedora container, `rpmbuild` with canonical `%cmake` |
 | `arch` | `.pkg.tar.zst` | archlinux container, `makepkg` |
-| `alpine` | `.apk` | alpine container, `abuild` |
+| `alpine` | `.apk` | alpine container via docker, `abuild` |
 | `flatpak` | `.flatpak` bundle | ubuntu runner + KDE runtime |
 | `appimage` | `.AppImage` | `ubuntu:25.10` container |
 

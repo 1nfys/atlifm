@@ -50,4 +50,5 @@ modules:
     rename-icon: atlifm
     post-install:
       - mkdir -p /app/share/metainfo
+      - sed -i 's|^Icon=atlifm$|Icon=io.github._1nfys.atlifm|' /app/share/applications/atlifm.desktop
       - sed -e 's|<id>atlifm.desktop</id>|<id>io.github._1nfys.atlifm.desktop</id>|' -e 's|<launchable type="desktop-id">atlifm.desktop</launchable>|<launchable type="desktop-id">io.github._1nfys.atlifm.desktop</launchable>|' atlifm.metainfo.xml > /app/share/metainfo/io.github._1nfys.atlifm.metainfo.xml
