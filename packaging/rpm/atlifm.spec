@@ -20,7 +20,11 @@ BuildRequires:  qt6-qtbase-devel >= 6.5
 BuildRequires:  qt6-qtsvg-devel
 %endif
 BuildRequires:  cmake >= 3.28
+%if 0%{?suse_version}
+BuildRequires:  ninja
+%else
 BuildRequires:  ninja-build
+%endif
 BuildRequires:  gcc-c++
 BuildRequires:  desktop-file-utils
 Requires:       hicolor-icon-theme

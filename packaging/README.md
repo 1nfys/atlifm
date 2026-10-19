@@ -142,7 +142,7 @@ optional repository variables (**Settings → Secrets and variables → Actions 
 one-time setup per service:
 
 * **COPR**: log in, create the project (`atlifm` by default) and enable the chroots you want (`fedora-*`, `epel-*`); the job submits the `*.src.rpm` from the release and follows the build to the end;
-* **OBS**: log in once (this creates `home:1nfys`), add the target distributions to the project (openSUSE, Fedora, Debian, Ubuntu) and put your login into `OBS_OSCRC`. the job creates the package itself, extracts the spec and sources from the release `*.src.rpm`, adds the Debian `*.dsc` set and commits, so one package feeds both, and repeating a run on a newer release replaces the old tarballs;
+* **OBS**: log in once (this creates `home:1nfys`), add the target distributions to the project (openSUSE, Fedora, Debian, Ubuntu) and put your login into `OBS_OSCRC`. the job creates the package itself, extracts the sources from the release `*.src.rpm`, takes the spec from `packaging/rpm/atlifm.spec`, adds the Debian `*.dsc` set and commits, so one package feeds both, and repeating a run on a newer release replaces the old tarballs;
 * **PPA**: create the PPA (`atlifm` by default), add your GPG key and an `ed25519` ssh key to the Launchpad profile, and use a dedicated ci signing key without a passphrase, since `debsign` cannot ask for one. the changelog suite is `unstable`; if Launchpad rejects the upload for that, rerun the workflow with `ppa_series` set to a series enabled on the PPA (an LTS or the current release): the job then uploads into `~1nfys/ubuntu/atlifm/<series>/`, which overrides the changelog suite. pick series with Qt >= 6.5.
 
 ## cloud builds (github actions)
