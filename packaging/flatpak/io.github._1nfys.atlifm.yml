@@ -18,6 +18,10 @@ runtime: org.kde.Platform
 runtime-version: '6.10'
 sdk: org.kde.Sdk
 command: atlifm
+# переименование desktop-файла и иконок в id приложения;
+# эти ключи работают только на верхнем уровне манифеста
+rename-desktop-file: atlifm.desktop
+rename-icon: atlifm
 finish-args:
   - --share=ipc
   - --socket=wayland
@@ -46,9 +50,6 @@ modules:
           - "*.tar.gz"
       - type: file
         path: ../common/atlifm.metainfo.xml
-    rename-desktop-file: atlifm.desktop
-    rename-icon: atlifm
     post-install:
       - mkdir -p /app/share/metainfo
-      - sed -i 's|^Icon=atlifm$|Icon=io.github._1nfys.atlifm|' /app/share/applications/atlifm.desktop
       - sed -e 's|<id>atlifm.desktop</id>|<id>io.github._1nfys.atlifm.desktop</id>|' -e 's|<launchable type="desktop-id">atlifm.desktop</launchable>|<launchable type="desktop-id">io.github._1nfys.atlifm.desktop</launchable>|' atlifm.metainfo.xml > /app/share/metainfo/io.github._1nfys.atlifm.metainfo.xml
