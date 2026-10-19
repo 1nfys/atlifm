@@ -8,6 +8,8 @@ why: default file managers on Linux are either GNOME Nautilus with user-friendly
 
 atlifm takes terminal aesthetics (multi-pane layout, pseudographics, monospace font, zero animations) while adding mouse controls, drag and drop, tabs and previews
 
+[download v1.0.0](https://github.com/1nfys/atlifm/releases/latest) · [documentation](https://1nfys.github.io/atlifml/docs/welcome) · [downloads guide](https://1nfys.github.io/atlifml/docs/downloads)
+
 ---
 
 ## features
@@ -98,9 +100,143 @@ ninja -C build
 
 ## installation
 
+prebuilt packages for **x86_64** and **aarch64** are attached to every release:
+
+**https://github.com/1nfys/atlifm/releases/latest**
+
+the release page also contains the source tarball and the Debian source package. command examples below use the `1.0.0` artifacts; replace the version with the release you downloaded.
+
+### supported distributions
+
+| distribution | supported releases | package channel |
+| :--- | :--- | :--- |
+| Arch Linux | rolling | pacman package, PKGBUILD |
+| Manjaro | rolling | pacman package |
+| Debian | 13 (trixie) and newer | `.deb`, OBS apt repository |
+| Ubuntu | 26.04 LTS and newer | PPA, OBS apt repository, `.deb` |
+| Fedora | 43 – 45 | COPR, OBS dnf repository, `.rpm` |
+| RHEL / CentOS Stream | 10 (EPEL 10) | COPR |
+| Alpine Linux | 3.22 and newer | `.apk` |
+| any glibc distribution | glibc 2.38+ | AppImage |
+
+Debian 12, Ubuntu 24.04 and other older releases ship Qt older than 6.5, which is below the minimum supported version. Use the AppImage (glibc 2.38+) or build from source with Qt 6.5+ on those systems. The AppImage is the only prebuilt option that bundles Qt itself.
+
+### arch linux / manjaro
+
+download the pacman package and install it locally:
+
 ```bash
+sudo pacman -U atlifm-1.0.0-1-x86_64.pkg.tar.zst
+```
+
+or build the `PKGBUILD` from this repository:
+
+```bash
+sh packaging/scripts/make-src-tarball.sh . packaging/arch
+cd packaging/arch
+makepkg -si
+```
+
+### debian / ubuntu
+
+ubuntu has a PPA:
+
+```bash
+sudo add-apt-repository ppa:1nfys/atlifm
+sudo apt update
+sudo apt install atlifm
+```
+
+debian and ubuntu can also install the `.deb` from the release page:
+
+```bash
+sudo apt install ./atlifm_1.0.0-1_amd64.deb     # x86_64
+sudo apt install ./atlifm_1.0.0-1_arm64.deb     # aarch64
+```
+
+### fedora / rhel
+
+the package is published in COPR for Fedora 43–45 and EPEL 10:
+
+```bash
+sudo dnf copr enable 1nfys/atlifm
+sudo dnf install atlifm
+```
+
+on RHEL 10 / CentOS Stream 10 enable EPEL first:
+
+```bash
+sudo dnf install epel-release
+sudo dnf copr enable 1nfys/atlifm
+sudo dnf install atlifm
+```
+
+alternatively, install the RPM from the release page:
+
+```bash
+sudo dnf install ./atlifm-1.0.0-1.fc44.x86_64.rpm
+```
+
+### opensuse build service
+
+signed repositories are built on OBS for Debian 13, Ubuntu 26.04 and Fedora 43/44:
+
+```bash
+# debian 13
+echo 'deb https://download.opensuse.org/repositories/home:/1nfys/Debian_13/ /' \
+  | sudo tee /etc/apt/sources.list.d/atlifm.list
+curl -fsSL https://download.opensuse.org/repositories/home:/1nfys/Debian_13/Release.key \
+  | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/atlifm.gpg > /dev/null
+sudo apt update && sudo apt install atlifm
+```
+
+```bash
+# ubuntu 26.04
+echo 'deb https://download.opensuse.org/repositories/home:/1nfys/xUbuntu_26.04/ /' \
+  | sudo tee /etc/apt/sources.list.d/atlifm.list
+curl -fsSL https://download.opensuse.org/repositories/home:/1nfys/xUbuntu_26.04/Release.key \
+  | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/atlifm.gpg > /dev/null
+sudo apt update && sudo apt install atlifm
+```
+
+```bash
+# fedora 44
+sudo dnf config-manager addrepo \
+  --from-repofile=https://download.opensuse.org/repositories/home:/1nfys/Fedora_44/home:1nfys.repo
+sudo dnf install atlifm
+```
+
+### alpine linux
+
+```bash
+sudo apk add --allow-untrusted ./atlifm-1.0.0-r0-x86_64.apk
+```
+
+### appimage (glibc 2.38+)
+
+the AppImage is self-contained and needs no installation:
+
+```bash
+chmod +x atlifm-1.0.0-x86_64.AppImage
+./atlifm-1.0.0-x86_64.AppImage
+```
+
+### from source
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build
 cmake --install build --prefix ~/.local
 update-desktop-database ~/.local/share/applications
+```
+
+the binary lands in `~/.local/bin/atlifm`; make sure that directory is in `PATH`. build dependencies for each distribution are listed in the **building** section above.
+
+### after installation
+
+the optional XDG portal setup makes atlifm the system file picker:
+
+```bash
 atlifm --setup-portal
 ```
 
