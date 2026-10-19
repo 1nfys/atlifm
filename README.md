@@ -114,7 +114,8 @@ the release page also contains the source tarball and the Debian source package.
 | Manjaro | rolling | pacman package |
 | Debian | 13 (trixie) and newer | `.deb`, OBS apt repository |
 | Ubuntu | 26.04 LTS and newer | PPA, OBS apt repository, `.deb` |
-| Fedora | 43 – 45 | COPR, OBS dnf repository, `.rpm` |
+| Fedora | 43-45 | COPR, OBS dnf repository, `.rpm` |
+| openSUSE | Tumbleweed (rolling) | OBS zypper repository, `.rpm` |
 | RHEL / CentOS Stream | 10 (EPEL 10) | COPR |
 | Alpine Linux | 3.22 and newer | `.apk` |
 | any glibc distribution | glibc 2.38+ | AppImage |
@@ -156,7 +157,7 @@ sudo apt install ./atlifm_1.0.0-1_arm64.deb     # aarch64
 
 ### fedora / rhel
 
-the package is published in COPR for Fedora 43–45 and EPEL 10:
+the package is published in COPR for Fedora 43-45 and EPEL 10:
 
 ```bash
 sudo dnf copr enable 1nfys/atlifm
@@ -179,7 +180,14 @@ sudo dnf install ./atlifm-1.0.0-1.fc44.x86_64.rpm
 
 ### opensuse build service
 
-signed repositories are built on OBS for Debian 13, Ubuntu 26.04 and Fedora 43/44:
+signed repositories are built on OBS for openSUSE Tumbleweed, Debian 13, Ubuntu 26.04 and Fedora 43/44:
+
+```bash
+# opensuse tumbleweed
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/1nfys/openSUSE_Tumbleweed/home:1nfys.repo
+sudo zypper refresh
+sudo zypper install atlifm
+```
 
 ```bash
 # debian 13
