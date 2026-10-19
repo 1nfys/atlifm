@@ -21,18 +21,17 @@ verified byte-for-byte against the upstream tag) with the fixes applied
 | `rpm/` | Fedora, RHEL, openSUSE (dnf/zypper) | `atlifm.spec` | Fedora COPR, openSUSE OBS |
 | `arch/` | Arch Linux, Manjaro (pacman) | `PKGBUILD` | AUR (optional, account required) |
 | `alpine/` | Alpine Linux, postmarketOS (apk) | `APKBUILD` | Alpine aports |
-| `flatpak/` | Flathub (flatpak) | `io.github._1nfys.atlifm.yml` | Flathub |
 | `appimage/` | distribution-independent | built by `scripts/build-appimage.sh` | GitHub Releases |
 | `scripts/` | local artifact builders | `make-src-tarball.sh`, `build-deb.sh`, `build-rpm.sh`, `build-appimage.sh` | local only |
 | `common/` | shared assets: `.desktop`, AppStream metainfo, man page | | |
 
-recipes that reference a local archive need it generated first: run `sh scripts/make-src-tarball.sh . arch` (or `... . alpine`) to drop `atlifm-1.0.0-fixed.tar.gz` next to the recipe. the archive checksum is `SKIP` in the `PKGBUILD`; for the `APKBUILD` refresh it once with `abuild checksum`. flatpak builds the tree directly. the CI workflow does all of this automatically.
+recipes that reference a local archive need it generated first: run `sh scripts/make-src-tarball.sh . arch` (or `... . alpine`) to drop `atlifm-1.0.0-fixed.tar.gz` next to the recipe. the archive checksum is `SKIP` in the `PKGBUILD`; for the `APKBUILD` refresh it once with `abuild checksum`. the CI workflow does all of this automatically.
 
 ## fixes applied to the source
 
 two upstream issues are fixed directly in the source (no patch files anywhere in the tree):
 
-1. **DESTDIR-aware install**: the `install(CODE)` block in `CMakeLists.txt` now writes the D-Bus service file into `$ENV{DESTDIR}` as well as `${CMAKE_INSTALL_PREFIX}`. every package manager that stages files (dpkg, rpmbuild, abuild, makepkg) relies on `DESTDIR`; without the fix the file lands in the real `/usr` of the *build machine* and is missing from the package payload (flatpak installs into its real prefix, so the fix is a no-op there).
+1. **DESTDIR-aware install**: the `install(CODE)` block in `CMakeLists.txt` now writes the D-Bus service file into `$ENV{DESTDIR}` as well as `${CMAKE_INSTALL_PREFIX}`. every package manager that stages files (dpkg, rpmbuild, abuild, makepkg) relies on `DESTDIR`; without the fix the file lands in the real `/usr` of the *build machine* and is missing from the package payload.
 2. **single desktop main category**: `desktop-file-validate` reports "more than one main category" for the upstream `Categories=System;FileTools;FileManager;Utility;Core;`; the source keeps `Categories=System;FileManager;FileTools;`.
 
 ## building locally
@@ -80,11 +79,6 @@ cp -r packaging/alpine/* aports/testing/atlifm/
 sh scripts/make-src-tarball.sh . aports/testing/atlifm
 cd aports/testing/atlifm && abuild checksum && abuild -r
 
-# Flatpak
-flatpak-builder --user --install --force-clean \
-    --state-dir="$HOME/.cache/atlifm-flatpak/state" \
-    "$HOME/.cache/atlifm-flatpak/build" \
-    packaging/flatpak/io.github._1nfys.atlifm.yml
 ```
 
 ## publishing to user repositories
@@ -97,10 +91,9 @@ the fastest route to real installable packages is the user-repository service of
 | openSUSE OBS | openSUSE, Fedora, Debian, Ubuntu | add `atlifm.spec` + sources to `home:1nfys`, `osc commit` |
 | Ubuntu PPA | Ubuntu | `dput ppa:1nfys/atlifm <source.changes>` (GPG-signed) |
 | Debian mentors | Debian (for sponsorship) | `dput mentors <source.changes>` |
-| Flathub | all flatpak distros | pull request with the manifest |
 | GitHub Releases | AppImage and every CI artifact | push a `v*` tag |
 
-users then install with `dnf copr enable 1nfys/atlifm`, `add-apt-repository ppa:1nfys/atlifm`, the OBS repository URL, or `flatpak install flathub io.github._1nfys.atlifm`
+users then install with `dnf copr enable 1nfys/atlifm`, `add-apt-repository ppa:1nfys/atlifm` or the OBS repository URL
 
 the `PKGBUILD` (with `.SRCINFO`) is AUR-ready; publishing there needs an AUR account and an SSH key, and is optional, since arch users can also build the `PKGBUILD` straight from this repository or from a self-hosted pacman repo
 
@@ -165,7 +158,6 @@ toolchain or powerful PC is needed:
 | `rpm` | `.rpm` + `.src.rpm` | fedora container, `rpmbuild` with canonical `%cmake` |
 | `arch` | `.pkg.tar.zst` | archlinux container, `makepkg` |
 | `alpine` | `.apk` | alpine container via docker, `abuild` |
-| `flatpak` | `.flatpak` bundle | ubuntu runner + KDE runtime |
 | `appimage` | `.AppImage` | `ubuntu:25.10` container |
 
 how to use it:
@@ -181,7 +173,7 @@ notes:
 * every job builds from the checked-out source; jobs that need an archive
   generate it in-job with `scripts/make-src-tarball.sh` (nothing is stored
   in the repository);
-* five of the six build jobs run as a matrix over `ubuntu-latest`
+* four of the five build jobs run as a matrix over `ubuntu-latest`
   (x86_64) and `ubuntu-24.04-arm` (aarch64); `arch` is x86_64-only; arm64
   runners are free for public repositories;
 * artifacts are attached to each workflow run (and to a GitHub Release on

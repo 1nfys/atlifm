@@ -61,4 +61,3 @@ desktop.ini
 # Packaging output
 dist/
 out/
-.flatpak-builder/

@@ -224,6 +224,6 @@ docs online: https://1nfys.github.io/atlifml/docs/welcome (user guide, configura
 
 ## packaging
 
-this repository also carries packaging for the mainstream standalone package managers: Debian/Ubuntu (`packaging/debian`), Fedora/RHEL/openSUSE (`packaging/rpm`), Arch (`packaging/arch`), Alpine (`packaging/alpine`), Flathub (`packaging/flatpak`) and a self-contained AppImage (`packaging/scripts/build-appimage.sh`), plus a GitHub Actions workflow that builds all of them for x86_64 and aarch64 (`.github/workflows/build-packages.yml`) and a publish workflow that uploads the source packages to COPR, OBS and a PPA with credentials from repository secrets (`.github/workflows/publish-packages.yml`)
+this repository also carries packaging for the mainstream standalone package managers: Debian/Ubuntu (`packaging/debian`), Fedora/RHEL/openSUSE (`packaging/rpm`), Arch (`packaging/arch`), Alpine (`packaging/alpine`) and a self-contained AppImage (`packaging/scripts/build-appimage.sh`), plus a GitHub Actions workflow that builds all of them for x86_64 and aarch64 (`.github/workflows/build-packages.yml`) and a publish workflow that uploads the source packages to COPR, OBS and a PPA with credentials from repository secrets (`.github/workflows/publish-packages.yml`)
 
 see `packaging/README.md` for per-format build and submission instructions

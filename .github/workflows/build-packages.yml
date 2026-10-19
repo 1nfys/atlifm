@@ -194,49 +194,6 @@ jobs:
           path: out/*
           if-no-files-found: error
 
-  flatpak:
-    name: "flatpak (${{ matrix.arch }})"
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest, arch: x86_64 }
-          - { runner: ubuntu-24.04-arm, arch: aarch64 }
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install flatpak-builder
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
-          sudo flatpak remote-add --if-not-exists flathub \
-            https://flathub.org/repo/flathub.flatpakrepo
-
-      - name: Install KDE runtime / SDK
-        run: |
-          sudo flatpak install -y --noninteractive flathub \
-            org.kde.Platform//6.10 org.kde.Sdk//6.10
-
-      - name: Build bundle
-        run: |
-          mkdir -p out
-          flatpak-builder --force-clean --disable-rofiles-fuse \
-            --state-dir="$RUNNER_TEMP/flatpak-state" \
-            --repo="$RUNNER_TEMP/flatpak-repo" \
-            "$RUNNER_TEMP/flatpak-build" \
-            "$GITHUB_WORKSPACE/packaging/flatpak/io.github._1nfys.atlifm.yml"
-          flatpak build-bundle "$RUNNER_TEMP/flatpak-repo" \
-            "out/atlifm-1.0.0-${{ matrix.arch }}.flatpak" io.github._1nfys.atlifm
-          ls -la out
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flatpak-${{ matrix.arch }}
-          path: out/*
-          if-no-files-found: error
-
   appimage:
     name: "AppImage (${{ matrix.arch }})"
     runs-on: ${{ matrix.runner }}
@@ -274,7 +231,7 @@ jobs:
   release:
     name: "GitHub Release"
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [deb, rpm, arch, alpine, flatpak, appimage]
+    needs: [deb, rpm, arch, alpine, appimage]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
