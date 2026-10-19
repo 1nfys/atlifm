@@ -141,7 +141,7 @@ install(FILES atlifm-logo/atlifm.png
 # реальный префикс установки (учитывается и `cmake --install --prefix`),
 # а не на каталог сборки разработчика
 install(CODE [[
-    file(MAKE_DIRECTORY "${CMAKE_INSTALL_PREFIX}/share/dbus-1/services")
-    file(WRITE "${CMAKE_INSTALL_PREFIX}/share/dbus-1/services/org.freedesktop.impl.portal.desktop.atlifm.service"
+    file(MAKE_DIRECTORY "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/dbus-1/services")
+    file(WRITE "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/dbus-1/services/org.freedesktop.impl.portal.desktop.atlifm.service"
         "[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.atlifm\nExec=${CMAKE_INSTALL_PREFIX}/bin/atlifm --portal\n")
 ]])

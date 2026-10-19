@@ -1,19 +1,19 @@
-/* atlifm example plugin (C ABI v1)
+/* пример плагина atlifm (C ABI v1)
  *
- * build from the repo root, header lives in atlifm-core/:
+ * сборка из корня репозитория, заголовок лежит в atlifm-core/:
  *   c++ -shared -fPIC -Iatlifm-core -O2 -o hello.so examples/hello-plugin/hello-plugin.cpp
  *
- * install:
+ * установка:
  *   mkdir -p ~/.config/atlifm/plugins
  *   cp hello.so ~/.config/atlifm/plugins/
  *
- * on startup the plugin registers:
- *   action hello_banner, Plugins menu item, default Ctrl+Alt+H
- *   override for properties, it declines handling and falls back to the builtin behavior
- *   preview for *.hello, first lines of the file as text
- *   hook on_start, writes a line to the log
+ * при запуске плагин регистрирует:
+ *   действие hello_banner: пункт меню Plugins, по умолчанию Ctrl+Alt+H
+ *   override для properties: отказывается от обработки, дальше работает встроенное поведение
+ *   preview для *.hello: первые строки файла текстом
+ *   hook on_start: пишет строку в лог
  *
- * log goes to /tmp/atlifm-hello.log or the path in ATLIFM_PLUGIN_LOG */
+ * лог пишется в /tmp/atlifm-hello.log или по пути из ATLIFM_PLUGIN_LOG */
 #include "atlifm-plugin-api.h"
 
 #include <cstdio>
@@ -59,7 +59,7 @@ int runBanner(const AtlifmInvocation* inv, void* user) {
 int overrideProperties(const AtlifmInvocation* inv, void*) {
     pluginLog("override hook: " + quote(inv->action) + " cwd=" + quote(inv->cwd) +
               " selection=" + std::to_string(inv->selection_count) + " -> fallback");
-    return 0; // not handled: atlifm runs the builtin properties
+    return 0; // не перехвачено: atlifm выполняет встроенный обработчик properties
 }
 
 void renderHello(const char* path, AtlifmWriteFn write, void* write_user, void*) {

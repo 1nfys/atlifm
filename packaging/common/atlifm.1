@@ -1,0 +1,53 @@
+.TH ATLIFM 1 "October 2026" "atlifm 1.0.0" "User Commands"
+.SH NAME
+atlifm \- terminal-style file manager with GUI features
+.SH SYNOPSIS
+.B atlifm
+.RI [ options ]
+.RI [ directory ]
+.SH DESCRIPTION
+.B atlifm
+is a mouse-first file manager with a terminal-like multi-pane layout.
+It provides Miller columns (parent, current directory and preview pane),
+tabs, drag and drop, archive browsing and extraction, previews for images,
+SVG, source code and binaries, full undo/redo for file operations, and an
+XDG desktop portal FileChooser backend.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.TP
+.BR \-v ", " \-\-version
+Show version information and exit.
+.TP
+.B \-\-portal
+Run as the XDG desktop portal FileChooser backend (D-Bus activatable).
+.TP
+.B \-\-setup\-portal
+Install and configure atlifm as the default XDG FileChooser portal backend
+for the current user.
+.SH ARGUMENTS
+.TP
+.I directory
+Initial directory to open.
+.SH FILES
+.TP
+.I ~/.config/atlifm/keybinds.conf
+Key bindings. Created automatically on first launch.
+.TP
+.I ~/.config/atlifm/theme.conf
+Window, font and color settings. Created automatically on first launch.
+.TP
+.I ~/.config/atlifm/plugins/
+Plugin directory. One
+.I .conf
+file per external command plugin; executable
+.IR .sh ", " .py " or " .bash
+files are picked up automatically; native plugins are
+.I .so
+files exporting
+.BR atlifm_plugin_init .
+.SH SEE ALSO
+Documentation: https://1nfys.github.io/atlifml/docs/welcome
+.br
+Project: https://github.com/1nfys/atlifm

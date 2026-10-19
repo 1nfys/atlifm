@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=atlifm
+Comment=Awesome terminal-like interface file manager (mouse-first, Wayland & X11)
+GenericName=File Manager
+Exec=atlifm %U
+Icon=atlifm
+Terminal=false
+Type=Application
+Categories=System;FileManager;FileTools;
+MimeType=inode/directory;application/zip;application/x-tar;application/x-compressed-tar;application/x-xz-compressed-tar;application/x-bzip2-compressed-tar;application/x-bzip-compressed-tar;application/x-zstd-compressed-tar;application/x-lz4-compressed-tar;application/x-lzma-compressed-tar;application/x-7z-compressed;application/vnd.rar;application/x-rar;application/x-rar-compressed;application/java-archive;application/vnd.efi.iso;application/x-iso9660-image;application/vnd.ms-cab-compressed;application/x-lha;application/x-arj;application/gzip;application/x-gzip;application/x-xz;application/x-bzip2;application/zstd;application/x-lz4;application/x-lzma;
+Keywords=files;file manager;miller;columns;browser;catppuccin;
+StartupNotify=true
+StartupWMClass=atlifm

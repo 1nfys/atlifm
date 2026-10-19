@@ -1,0 +1,30 @@
+Source: atlifm
+Section: utils
+Priority: optional
+Maintainer: 1nfys <lifawafla@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake (>= 3.28),
+ ninja-build,
+ qt6-base-dev (>= 6.5),
+ qt6-svg-dev,
+Standards-Version: 4.7.0
+Homepage: https://github.com/1nfys/atlifm
+Vcs-Browser: https://github.com/1nfys/atlifm
+Vcs-Git: https://github.com/1nfys/atlifm.git
+Rules-Requires-Root: no
+
+Package: atlifm
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: terminal-style file manager with a GUI mouse-first workflow
+ atlifm is a mouse-first file manager that keeps a terminal aesthetic:
+ a multi-pane (Miller columns) layout, monospace font and no animations,
+ while adding drag and drop, tabs, previews and XDG desktop portal
+ integration.
+ .
+ Features include interactive archive browsing (zip, tar, 7z, rar),
+ image, SVG, code, directory-tree and hex previews, full undo and redo
+ for file operations, bookmarks, tabs with independent navigation
+ history, and a plugin system (configuration, shell script and native
+ C++ plugins).

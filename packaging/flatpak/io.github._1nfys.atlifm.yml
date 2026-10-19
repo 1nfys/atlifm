@@ -1,0 +1,53 @@
+# манифест Flatpak для atlifm.
+#
+# локальная сборка (нужны flatpak, flatpak-builder и установленный рантайм org.kde):
+#   flatpak install flathub org.kde.Platform//6.10 org.kde.Sdk//6.10
+#   flatpak-builder --user --install --force-clean build-dir \
+#       io.github._1nfys.atlifm.yml
+#
+# затем запуск:
+#   flatpak run io.github._1nfys.atlifm
+#
+# про app-id: элемент имени D-Bus не может начинаться с цифры, поэтому
+# GitHub-логин "1nfys" идёт с подчёркиванием впереди.  если есть свой
+# домен, лучше переключиться до отправки в Flathub, например на
+# "org.atlifm.Atlifm".
+
+app-id: io.github._1nfys.atlifm
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: atlifm
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # файловому менеджеру нужен прямой доступ к файловой системе
+  - --filesystem=host
+  # чтобы корзина и конфиг работали внутри песочницы
+  - --env=QT_QPA_PLATFORMTHEME=kde
+
+modules:
+  - name: atlifm
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .github
+          - packaging
+          - build
+          - dist
+          - out
+          - "*.tar.gz"
+      - type: file
+        path: ../common/atlifm.metainfo.xml
+    rename-desktop-file: atlifm.desktop
+    rename-icon: atlifm
+    post-install:
+      - mkdir -p /app/share/metainfo
+      - sed -e 's|<id>atlifm.desktop</id>|<id>io.github._1nfys.atlifm.desktop</id>|' -e 's|<launchable type="desktop-id">atlifm.desktop</launchable>|<launchable type="desktop-id">io.github._1nfys.atlifm.desktop</launchable>|' atlifm.metainfo.xml > /app/share/metainfo/io.github._1nfys.atlifm.metainfo.xml

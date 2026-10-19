@@ -1,0 +1,21 @@
+pkgbase = atlifm
+	pkgdesc = Terminal-style file manager with a GUI mouse-first workflow
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/1nfys/atlifm
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cmake
+	makedepends = ninja
+	depends = qt6-base
+	depends = qt6-svg
+	depends = hicolor-icon-theme
+	source = atlifm-1.0.0-fixed.tar.gz
+	source = atlifm.metainfo.xml
+	source = atlifm.1
+	sha256sums = SKIP
+	sha256sums = 7043f33a2a99da4458341779c813e43e3a38d07b7bfd07eac8da8ae372db1d64
+	sha256sums = 8fd641ee56dfecedd82be65bee9c18b50393ca0c2582af5f39b9072da9eae8a5
+
+pkgname = atlifm

@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+
+# система сборки это обычные CMake и Ninja. интеграция cmake в debhelper
+# конфигурирует с -DCMAKE_INSTALL_PREFIX=/usr и выполняет "cmake --install"
+# в debian/atlifm, поэтому все пути внутри пакета начинаются с usr/:
+#
+#   usr/bin/atlifm
+#   usr/include/atlifm/atlifm-plugin-api.h
+#   usr/share/applications/atlifm.desktop, atlifm-portal.desktop
+#   usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.atlifm.service
+#   usr/share/icons/hicolor/{16x16,...,1024x1024}/apps/atlifm.png
+#   usr/share/xdg-desktop-portal/atlifm.portal, hyprland-portals.conf
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/atlifm
+	install -Dm644 debian/atlifm.metainfo.xml \
+		debian/atlifm/usr/share/metainfo/atlifm.metainfo.xml

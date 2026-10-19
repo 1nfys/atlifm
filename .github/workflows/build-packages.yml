@@ -1,0 +1,289 @@
+name: Build packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    name: "deb (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    container: debian:13
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates tar xz-utils gzip \
+            build-essential cmake ninja-build qt6-base-dev qt6-svg-dev \
+            dpkg-dev debhelper fakeroot lintian
+
+      - uses: actions/checkout@v4
+
+      - name: Build binary package
+        run: |
+          mkdir -p build out
+          src=$(sh packaging/scripts/make-src-tarball.sh . build)
+          tar xf "$src" -C build
+          cp -r packaging/debian build/atlifm-1.0.0/debian
+          cd build/atlifm-1.0.0
+          dpkg-buildpackage -B -us -uc
+
+      - name: Build source package
+        if: matrix.arch == 'x86_64'
+        run: |
+          mkdir -p build/src
+          src=$(sh packaging/scripts/make-src-tarball.sh . build/src)
+          cp "$src" build/src/atlifm_1.0.0.orig.tar.gz
+          tar xf build/src/atlifm_1.0.0.orig.tar.gz -C build/src
+          cp -r packaging/debian build/src/atlifm-1.0.0/debian
+          cd build/src/atlifm-1.0.0
+          dpkg-buildpackage -S -us -uc
+
+      - name: Lintian
+        continue-on-error: true
+        run: lintian build/*.deb || true
+
+      - name: Collect artifacts
+        run: |
+          cp build/*.deb build/*.changes out/ 2>/dev/null || true
+          cp build/src/*.dsc build/src/*.orig.tar.gz \
+             build/src/*.debian.tar.xz build/src/*.changes out/ 2>/dev/null || true
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  rpm:
+    name: "rpm (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    container: fedora:latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y git ca-certificates tar gzip \
+            rpm-build redhat-rpm-config cmake-rpm-macros cmake ninja-build gcc-c++ \
+            qt6-qtbase-devel qt6-qtsvg-devel desktop-file-utils
+
+      - uses: actions/checkout@v4
+
+      - name: Set up rpmbuild tree
+        run: |
+          mkdir -p out ~/rpmbuild/BUILD ~/rpmbuild/BUILDROOT ~/rpmbuild/RPMS \
+                   ~/rpmbuild/SOURCES ~/rpmbuild/SPECS ~/rpmbuild/SRPMS
+          sh packaging/scripts/make-src-tarball.sh . ~/rpmbuild/SOURCES >/dev/null
+          cp packaging/rpm/atlifm.spec ~/rpmbuild/SPECS/
+          cp packaging/common/atlifm.metainfo.xml packaging/common/atlifm.1 \
+             ~/rpmbuild/SOURCES/
+
+      - name: rpmbuild
+        run: |
+          rpmbuild -ba ~/rpmbuild/SPECS/atlifm.spec
+          cp ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.src.rpm out/
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  arch:
+    name: "pacman (Arch Linux)"
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 90
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git cmake ninja qt6-base qt6-svg hicolor-icon-theme
+
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        run: |
+          mkdir -p out
+          sh packaging/scripts/make-src-tarball.sh . packaging/arch >/dev/null
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE/packaging/arch"
+          runuser -u builder -- makepkg --noconfirm
+          cp ./*.pkg.tar.zst "$GITHUB_WORKSPACE/out/"
+          bsdtar -tf ./*.pkg.tar.zst | head -20
+          ls -la "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pacman
+          path: out/*
+          if-no-files-found: error
+
+  alpine:
+    name: "apk (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    container: alpine:3.22
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache git ca-certificates curl tar gzip \
+            build-base cmake samurai qt6-qtbase-dev qt6-qtsvg-dev abuild
+
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        run: |
+          mkdir -p out
+          sh packaging/scripts/make-src-tarball.sh . packaging/alpine >/dev/null
+          abuild-keygen -a -n || true
+          key=$(find /root/.abuild -name '*.rsa' 2>/dev/null | head -n1)
+          if [ -n "$key" ]; then
+            echo "PACKAGER_PRIVKEY=$key" >> /etc/abuild.conf
+            cp "$key.pub" /etc/apk/keys/ 2>/dev/null || true
+          fi
+          cd "$GITHUB_WORKSPACE/packaging/alpine"
+          abuild -F checksum
+          abuild -F -r -P /tmp/packages
+          find /tmp/packages -name '*.apk' | while read -r f; do
+            cp "$f" "$GITHUB_WORKSPACE/out/$(basename "$f" .apk)-${{ matrix.arch }}.apk"
+          done
+          ls -la "$GITHUB_WORKSPACE/out"
+        env:
+          PACKAGER: "1nfys <lifawafla@gmail.com>"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  flatpak:
+    name: "flatpak (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install KDE runtime / SDK
+        run: |
+          sudo flatpak install -y --noninteractive flathub \
+            org.kde.Platform//6.10 org.kde.Sdk//6.10
+
+      - name: Build bundle
+        run: |
+          mkdir -p out
+          flatpak-builder --force-clean --disable-rofiles-fuse \
+            --state-dir="$RUNNER_TEMP/flatpak-state" \
+            --repo="$RUNNER_TEMP/flatpak-repo" \
+            "$RUNNER_TEMP/flatpak-build" \
+            "$GITHUB_WORKSPACE/packaging/flatpak/io.github._1nfys.atlifm.yml"
+          flatpak build-bundle "$RUNNER_TEMP/flatpak-repo" \
+            "out/atlifm-1.0.0-${{ matrix.arch }}.flatpak" io.github._1nfys.atlifm
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  appimage:
+    name: "AppImage (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:25.10
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates curl tar gzip \
+            build-essential cmake ninja-build \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-wayland \
+            file patchelf zstd
+
+      - uses: actions/checkout@v4
+
+      - name: Build AppImage
+        run: |
+          mkdir -p out
+          sh packaging/scripts/build-appimage.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: "GitHub Release"
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [deb, rpm, arch, alpine, flatpak, appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate source archive
+        run: sh packaging/scripts/make-src-tarball.sh . artifacts >/dev/null
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          generate_release_notes: true

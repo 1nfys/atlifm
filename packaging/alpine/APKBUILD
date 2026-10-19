@@ -1,0 +1,37 @@
+# Мейнтейнер: 1nfys <lifawafla@gmail.com>
+pkgname=atlifm
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="Terminal-style file manager with a GUI mouse-first workflow"
+url="https://github.com/1nfys/atlifm"
+arch="aarch64 x86_64"
+license="MIT"
+makedepends="cmake ninja qt6-qtbase-dev qt6-qtsvg-dev"
+depends="qt6-qtbase qt6-qtsvg hicolor-icon-theme"
+subpackages="$pkgname-doc"
+source="atlifm-$pkgver-fixed.tar.gz
+	atlifm.metainfo.xml
+	atlifm.1"
+
+# контрольная сумма тарбола: обновляется через 'abuild checksum' после
+# генерации архива скриптом scripts/make-src-tarball.sh
+sha512sums="2ca20a7fdc67ea56f8be7a477bf19ec78a314b99cbbcf7155b68cf500a11d6588821e7efb18d4ede48a567744e91c6e4441195d775776a8fa33b97a3cb2d4657  atlifm-1.0.0-fixed.tar.gz
+746c3b1df84042da4b4feed06ac95cfbc8dd0d2869da04fc8dd04b8ced121aa9f4ac8962619137ae043a51fef9e60541679e120bd5f4bba7e2e144e4929bc0a7  atlifm.metainfo.xml
+88ac91c4994e769ae69deeffac959e926d08edee464957f2380c678ff050f61629e7514334d1ecd2c800008a88433848bf03acae33b8e0fdf004fbc8a97a8268  atlifm.1"
+
+build() {
+	cmake -S "$srcdir"/$pkgname-$pkgver -B "$srcdir"/build -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_INSTALL_SYSCONFDIR=/etc
+	cmake --build "$srcdir"/build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install "$srcdir"/build
+	install -Dm644 "$srcdir"/atlifm.metainfo.xml \
+		"$pkgdir"/usr/share/metainfo/atlifm.metainfo.xml
+	install -Dm644 "$srcdir"/atlifm.1 \
+		"$pkgdir"/usr/share/man/man1/atlifm.1
+}

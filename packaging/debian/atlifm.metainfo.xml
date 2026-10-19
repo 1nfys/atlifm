@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>atlifm.desktop</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>atlifm</name>
+  <summary>Terminal-style file manager with GUI features</summary>
+  <description>
+    <p>
+      atlifm is a mouse-first file manager that keeps a terminal aesthetic:
+      a multi-pane layout, monospace font and no animations, while adding
+      drag and drop, tabs, previews and XDG desktop portal integration.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Miller columns with parent / current / preview panes</li>
+      <li>Mouse interaction, drag and drop, tabs and independent histories</li>
+      <li>Image, SVG, code, directory tree and hex previews</li>
+      <li>Interactive browsing and extraction of zip, tar, 7z and rar archives</li>
+      <li>Full undo / redo for file operations</li>
+      <li>XDG desktop portal FileChooser backend</li>
+      <li>Plugins: config, shell script and native C++ plugins</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">atlifm.desktop</launchable>
+  <url type="homepage">https://github.com/1nfys/atlifm</url>
+  <url type="bugtracker">https://github.com/1nfys/atlifm/issues</url>
+  <url type="vcs-browser">https://github.com/1nfys/atlifm</url>
+  <developer id="io.github._1nfys">
+    <name>1nfys</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Miller columns, tabs and preview pane</caption>
+      <image>https://raw.githubusercontent.com/1nfys/atlifm/main/atlifm-logo/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.0.0" date="2026-10-18">
+      <description>
+        <p>First public release.</p>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>System</category>
+    <category>FileManager</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>file manager</keyword>
+    <keyword>miller columns</keyword>
+    <keyword>terminal</keyword>
+    <keyword>preview</keyword>
+  </keywords>
+  <provides>
+    <binary>atlifm</binary>
+  </provides>
+</component>
