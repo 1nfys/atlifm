@@ -6,14 +6,15 @@ pkgdesc="Terminal-style file manager with a GUI mouse-first workflow"
 arch=('x86_64' 'aarch64')
 url="https://github.com/1nfys/atlifm"
 license=('MIT')
-depends=('qt6-base' 'qt6-svg' 'hicolor-icon-theme')
-makedepends=('cmake' 'ninja')
+depends=('qt6-base' 'qt6-svg' 'glib2' 'hicolor-icon-theme')
+makedepends=('cmake' 'ninja' 'pkgconf')
+optdepends=('libsecret: password management for network places')
 source=("atlifm-$pkgver-fixed.tar.gz"
         "atlifm.metainfo.xml"
         "atlifm.1")
 sha256sums=('SKIP'
-            '7043f33a2a99da4458341779c813e43e3a38d07b7bfd07eac8da8ae372db1d64'
-            '8fd641ee56dfecedd82be65bee9c18b50393ca0c2582af5f39b9072da9eae8a5')
+            'cf86a66fa4ab47048545e64e5d472499cd688a8b0390bb0c2e9e3bc189ae6fca'
+            'b102975be0e05c391efb4bba4ef2eb9acd660e83373b1cbd861245222d8aaa43')
 
 build() {
 	cmake -S "$pkgname-$pkgver" -B build -G Ninja \

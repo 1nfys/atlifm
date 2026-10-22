@@ -11,9 +11,15 @@ Source2:        atlifm.1
 %if 0%{?suse_version}
 BuildRequires:  qt6-base-devel >= 6.5
 BuildRequires:  qt6-svg-devel
+BuildRequires:  pkg-config
+BuildRequires:  glib2-devel
+BuildRequires:  libsecret-devel
 %else
 BuildRequires:  qt6-qtbase-devel >= 6.5
 BuildRequires:  qt6-qtsvg-devel
+BuildRequires:  pkgconf-pkg-config
+BuildRequires:  glib2-devel
+BuildRequires:  libsecret-devel
 %endif
 BuildRequires:  cmake >= 3.28
 %if 0%{?suse_version}

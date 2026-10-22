@@ -32,6 +32,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             git ca-certificates tar xz-utils gzip \
             build-essential cmake ninja-build qt6-base-dev qt6-svg-dev \
+            pkgconf libglib2.0-dev libsecret-1-dev \
             dpkg-dev debhelper fakeroot lintian
 
       - uses: actions/checkout@v4
@@ -90,7 +91,8 @@ jobs:
         run: |
           dnf install -y git ca-certificates tar gzip \
             rpm-build redhat-rpm-config cmake-rpm-macros cmake ninja-build gcc-c++ \
-            qt6-qtbase-devel qt6-qtsvg-devel desktop-file-utils
+            qt6-qtbase-devel qt6-qtsvg-devel desktop-file-utils \
+            pkgconf-pkg-config glib2-devel libsecret-devel
 
       - uses: actions/checkout@v4
 
@@ -124,7 +126,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel git cmake ninja qt6-base qt6-svg hicolor-icon-theme
+            base-devel git cmake ninja qt6-base qt6-svg glib2 libsecret pkgconf hicolor-icon-theme
 
       - uses: actions/checkout@v4
 
@@ -213,6 +215,7 @@ jobs:
             git ca-certificates curl tar gzip \
             build-essential cmake ninja-build \
             qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins qt6-wayland \
+            pkgconf libglib2.0-dev libsecret-1-dev \
             file patchelf zstd
 
       - uses: actions/checkout@v4

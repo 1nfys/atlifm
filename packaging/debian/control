@@ -6,6 +6,9 @@ Build-Depends:
  debhelper-compat (= 13),
  cmake (>= 3.28),
  ninja-build,
+ pkgconf | pkg-config,
+ libglib2.0-dev,
+ libsecret-1-dev,
  qt6-base-dev (>= 6.5),
  qt6-svg-dev,
 Standards-Version: 4.7.0
