@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.1" date="2026-10-21">
+      <description>
+        <p>Multiple windows, layout restore, search scope and memory fixes.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-10-18">
       <description>
         <p>First public release.</p>

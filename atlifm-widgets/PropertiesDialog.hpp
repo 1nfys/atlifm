@@ -32,7 +32,7 @@ public:
     void setPath(const std::filesystem::path& p);
 
     // компактные свойства (по умолчанию): без консоли Disk Usage, для
-    // каталогов в поле Size считается только вес папки (`du -s -b`)
+    // для каталогов в поле size считается только вес папки через du
     // для корня диска/ФС (точки монтирования, напр. /, /home, /mnt/usb) и
     // только для него показывается консоль Disk Usage с разбивкой по
     // подпапкам и заполнением ФС автоматически, без отдельных клавиш
@@ -51,23 +51,23 @@ private:
     void loadFileInfo();
     void applyPermissions();
 
-    // компактные свойства: вес каталога одним числом (`du -s -b`) без консоли;
-    // при отказе молчаливая проба `sudo -n` при живом тикете, иначе «?»;
+    // компактные свойства: вес каталога одним числом через du без консоли
+    // при отказе молчаливая проба sudo при живом тикете иначе знак вопроса
     // диалогов и паролей здесь нет
     void startPathWeightScan();
     void runPathWeightProc(bool viaSudo);
     void stopPathWeightProc();
 
     // Disk Usage классическая консоль внутри диалога (только каталоги):
-    // шапка ФС и заголовок таблицы видны мгновенно, `du -x -d1 -b --null`
+    // шапка файловой системы и таблица видны мгновенно а скан du идет в фоне
     // течёт асинхронно (readyRead в поток GUI), таблица и полоса прогресса
     // наполняются по ходу скана. Закрытые подпапки показываются «?» и
     // измеряются последними ровно одним привилегированным вызовом на весь
-    // скан: живой тикет sudo → молча (`sudo -n`), иначе один батч pkexec
-    // (`sh -c` со всеми путями) = один системный диалог; временные правила
+    // скан: живой тикет sudo молча иначе один батч pkexec на все пути
+    // без создания лишних диалогов пароля
     // sudoers не создаются. Если pkexec недоступен или диалог отклонён, чип
-    // инлайн «needed sudo» с полем пароля (sudo -k → sudo -S -v → тикет,
-    // дальше `sudo -n`). Если root не помог «?» и легенда; повторного
+    // инлайн ввод пароля sudo проверяет пароль и делает тикет
+    // а дальше продолжается скан без повторного запроса
     // полного скана после авторизации нет
     void startDiskUsageScan();
     void startSudoDiskUsage();
@@ -108,7 +108,7 @@ private:
     QLabel* m_inodeLabel{nullptr};
     QLabel* m_ownerLabel{nullptr};
 
-    // компактные свойства: вес папки (du -s -b); счётчик job отсекает
+    // компактные свойства: вес папки через du а счетчик заданий отсекает устаревшие ответы
     // устаревшие сигналы при повторных setPath
     bool m_diskUsageShown{false};         // путь корень диска/ФС: консоль видна
     std::atomic<uint64_t> m_weightJob{0};
@@ -131,7 +131,7 @@ private:
     QLineEdit* m_diskPasswordEdit{nullptr};
     QLabel* m_diskSudoErrorLabel{nullptr};
     int m_diskBarShownPct{-1};            // что реально показал бар (последний кадр)
-    int m_diskFrozenPct{-2};              // -2 не заморожен, -1 «…», >=0 процент
+    int m_diskFrozenPct{-2};              // минус два не заморожен а минус один точки или процент
     int m_diskQueueBasePct{0};            // стартовая точка очереди (без отката)
 
     std::atomic<uint64_t> m_diskScanJob{0};
@@ -142,7 +142,7 @@ private:
     QHash<QString, qint64> m_diskSizes;  // имя подкаталога → байты
     QSet<QString> m_diskResolved;        // имена, для которых размер получен
     QSet<QString> m_diskRestricted;      // ошибки доступа в текущей фазе (неполный размер)
-    QSet<QString> m_diskMountChildren;   // дети точки монтирования (другая ФС): du -x их пропускает
+    QSet<QString> m_diskMountChildren;   // дети точки монтирования на другой файловой системе которых du пропускает
     bool m_diskMountWaveDone{false};     // их поштучная волна уже запускалась
     QSet<QString> m_diskUnknown;         // финальные строки «?»
     QSet<QString> m_diskProgressChildren; // дети из m_diskTotalDirs (одна ФС) только их считаем в прогрессе
@@ -159,9 +159,9 @@ private:
     uint64_t m_diskHardCapJob{0};        // абсолютный кап один раз на фазу
     bool m_diskHardCapPhase{false};
 
-    // параллельная волна для медленных ФС (NTFS через ntfs-3g/FUSE): один
+    // параллельная волна для медленных файловых систем ntfs или fuse
     // последовательный du упирается в latency отдельных запросов stat, поэтому
-    // подпапки первого уровня сканируются одновременно `du -s -b -x`
+    // подпапки первого уровня сканируются одновременно через du
     bool m_diskParallelMode{false};
     QStringList m_diskParallelQueue;                 // оставшиеся подпапки
     QList<QProcess*> m_diskParallelProcs;            // активные du по подпапкам
@@ -169,7 +169,7 @@ private:
     QHash<QProcess*, QString> m_diskParallelErrBufs; // stderr волны (Permission denied)
 
     // вторая волна (закрытые папки последними). Авторизация: живой
-    // тикет sudo молча; иначе один батч pkexec (`sh -c` со всеми путями) =
+    // тикет sudo молча иначе один батч pkexec со всеми путями
     // один системный диалог; отказ или нет полкита → поле инлайн пароля
     QStringList m_diskSudoQueue;
     int m_diskSudoQueueTotal{0};

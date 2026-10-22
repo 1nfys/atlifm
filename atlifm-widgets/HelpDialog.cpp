@@ -32,12 +32,27 @@ const QHash<QString, QStringList>& sectionExtras() {
     static const QHash<QString, QStringList> extras = {
         {"SEARCH & FILTER", {
             "Type-as-you-go    : Just start typing letters to fuzzy search",
-            "Enter             : Keep filter for this folder ([Filter] badge)",
-            "\"▾\" by the filter : Saved filters for the folder + Reset",
+            "Ctrl+F            : Fuzzy filter names in the current folder",
+            "fd <query>        : Search names on all mounted disks (Ctrl+F command)",
+            "rg <query>        : Search file contents on all mounted disks (Ctrl+F command)",
+            "Enter / Esc       : Enter keeps fd/rg results; Esc returns to plain filter",
+            "Plugin command    : Type '<Command> <query>' and press Enter",
+            "Plugin output     : Three panes; plugins use @@pane:0 / 1 / 2 for parent / center / preview",
+            "Network address   : ftp://, ftps://, ftpis://, sftp://, smb://, \\\\host\\share, host[:port]",
+            "SFTP key          : Private key path (remembered per host); passphrase goes in Password",
+        }},
+        {"LAYOUT", {
+            "save_layout       : Save window/panels to ~/.config/atlifm/layout.ini",
+            "reset_layout      : Remove layout.ini and restore theme.conf values",
         }},
         {"FILE OPERATIONS", {
             "Space             : Toggle item selection and advance cursor",
-            "Open With...      Right-click a file: search apps, Default/Other, Always use, Choose application…",
+            "Open With...      Right-click a file: search all apps, default first, Always use",
+            "F2 on multi-select: In-window bulk rename panel (old → new, validated first)",
+        }},
+        {"GENERAL", {
+            "Rebinding         : Conflicting shortcuts are rejected; reset also checks for collisions",
+            "Hand-edited config: Duplicate combinations are skipped at startup with a warning",
         }},
     };
     return extras;
@@ -48,10 +63,15 @@ const QStringList& mouseRows() {
         "Double Click      : Open folder / launch program or file",
         "Right Click (ПКМ) : Terminal context menu (file or empty folder space)",
         "Mouse Drag Select : Drag on empty space or gutter to draw selection box",
+        "Archive Box       : Drag the left indent / right edge or empty space",
+        "Archive Shift     : Shift+Click or Shift+drag extends from the last click",
+        "Archive Multi     : Ctrl+Click toggles, Ctrl+A selects all; Ctrl+C copies",
+        "Selection Scope   : The last clicked archive or file list keeps its selection",
         "Drag & Drop       : Drag selected files to any folder, bookmark, or tab",
         "Tab Bar DND       : Hover over another tab while dragging to switch",
         "Side Buttons      : Back / Forward history navigation",
-        "Middle Click      : Close tab (on Tab Bar) / Open in new tab (on Bookmark)",
+        "Middle Click      : Open folder in new tab (file list) / Close tab (Tab Bar) / Open bookmark in new tab",
+        "Ctrl+Return       : Open selected folder (or current folder) in a new tab",
     };
     return rows;
 }
@@ -145,16 +165,7 @@ QString HelpDialog::keyDisplay(const QStringList& keys) const {
 }
 
 QString HelpDialog::conflictForAction(const QString& actionId, const QString& key) const {
-    for (const Core::Keybinds::Action& a : Core::Keybinds::actionTable()) {
-        if (a.id == actionId) continue;
-        if (Core::Keybinds::keysFor(a.id).contains(key)) return a.id;
-    }
-    const auto pluginActions = Core::Keybinds::acceptedPluginActions();
-    for (auto it = pluginActions.constBegin(); it != pluginActions.constEnd(); ++it) {
-        if (it.key() == actionId) continue;
-        if (Core::Keybinds::keysFor(it.key()).contains(key)) return it.key();
-    }
-    return {};
+    return Core::Keybinds::conflictForAction(actionId, key);
 }
 
 void HelpDialog::rebuild() {
@@ -346,6 +357,20 @@ void HelpDialog::cancelCapture() {
 void HelpDialog::resetBinding(const QString& actionId) {
     if (actionId.isEmpty()) return;
     if (isCapturing()) cancelCapture();
+
+    // сброс к дефолту не должен создать дубль с другим текущим биндом
+    for (const QString& key : Core::Keybinds::defaultKeysFor(actionId)) {
+        const QString conflict = conflictForAction(actionId, key);
+        if (!conflict.isEmpty()) {
+            if (m_status) {
+                m_status->setText(
+                    QString("Reset blocked: %1 is already bound to %2.")
+                        .arg(keyDisplayOf(QStringList{key}), actionLabel(conflict)));
+            }
+            return;
+        }
+    }
+
     Core::Keybinds::resetUserBinding(actionId);
     Core::Keybinds::reload();
     rebuild();
@@ -416,14 +441,22 @@ void HelpDialog::keyPressEvent(QKeyEvent* event) {
         return;
     }
     const QString id = m_captureAction;
-    // конфликт не блокирует назначение, но показывается: при неоднозначном
-    // QShortcut Qt глушит оба действия
     const QString conflict = conflictForAction(id, portable);
-    QString status = QString("Rebound: %1 → %2")
-                         .arg(actionLabel(id), seq.toString(QKeySequence::NativeText));
-    if (!conflict.isEmpty())
-        status += QString("  · already bound to: %1").arg(actionLabel(conflict));
-    saveAndFinish(QStringList{portable}, status);
+    if (!conflict.isEmpty()) {
+        // не сохраняем неоднозначный бинд: Qt отключит оба QShortcut,
+        // и пользователь потеряет и старое действие, и новое
+        if (m_status) {
+            m_status->setText(
+                QString("Conflict: %1 is already bound to %2. Choose another shortcut or unbind it first.")
+                    .arg(seq.toString(QKeySequence::NativeText), actionLabel(conflict)));
+        }
+        event->accept();
+        return;
+    }
+
+    saveAndFinish(QStringList{portable},
+                  QString("Rebound: %1 → %2")
+                      .arg(actionLabel(id), seq.toString(QKeySequence::NativeText)));
     event->accept();
 }
 

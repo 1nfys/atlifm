@@ -2,64 +2,15 @@
 #include "BookmarksBar.hpp"
 #include "MillerColumns.hpp"
 #include "StatusBar.hpp"
-#include "../atlifm-core/Icons.hpp"
 #include "../atlifm-core/XdgUtils.hpp"
 #include "../atlifm-dnd/DragDropHandler.hpp"
 #include "../atlifm-theme/Theme.hpp"
-#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
-#include <QPainter>
-#include <QScrollArea>
-#include <QScrollBar>
 #include <QShortcut>
-#include <QTimer>
 #include <QVBoxLayout>
-#include <algorithm>
-#include <cstdlib>
 
 namespace Widgets {
-
-namespace {
-
-// разделитель breadcrumb рисуется вручную, а не текстовым глифом «›»: при дробном масштабе
-// растрирование смещается на пиксель между метками, рисование по центру виджета даёт одинаковую позицию
-class CrumbSeparator : public QWidget {
-public:
-    explicit CrumbSeparator(QWidget* parent = nullptr) : QWidget(parent) {
-        setFixedSize(9, 28);
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        QPen pen(Theme::Colors::Dim());
-        pen.setWidthF(1.4);
-        p.setPen(pen);
-        const QPointF c(width() / 2.0 - 0.5, height() / 2.0 + 0.5);
-        p.drawLine(QPointF(c.x() - 1.6, c.y() - 3.4), QPointF(c.x() + 1.6, c.y()));
-        p.drawLine(QPointF(c.x() + 1.6, c.y()), QPointF(c.x() - 1.6, c.y() + 3.4));
-    }
-};
-
-// стиль сегмента breadcrumb: текущий с заливкой Accent, остальные с hover
-QString crumbStyle(bool current) {
-    using namespace Theme::Colors;
-    if (current) {
-        return QStringLiteral(
-            "QPushButton { background: %1; color: %2; border: none;"
-            " padding: 3px 8px; }")
-            .arg(SelectionBg().name(), SelectionFg().name());
-    }
-    return QStringLiteral(
-        "QPushButton { background: transparent; color: %1; border: none;"
-        " padding: 3px 8px; }"
-        "QPushButton:hover { background: %2; color: %3; }")
-        .arg(Subtext().name(), Surface1().name(), Text().name());
-}
-
-}
 
 FileChooserDialog::FileChooserDialog(QWidget* parent)
     : QWidget(parent) {
@@ -72,25 +23,32 @@ void FileChooserDialog::setupUi() {
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // верх: строка путей breadcrumb вместо вкладок основного окна, клик по сегменту переход в него
-    m_crumbScroll = new QScrollArea(this);
-    m_crumbScroll->setObjectName(QStringLiteral("chooserBreadcrumb"));
-    m_crumbScroll->setWidgetResizable(true);
-    m_crumbScroll->setFrameShape(QFrame::NoFrame);
-    m_crumbScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_crumbScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_crumbScroll->setFixedHeight(28);
-    m_crumbScroll->setAttribute(Qt::WA_StyledBackground, true);
+    // верх: в режиме Save имя файла; путь остаётся внизу в адресной строке
+    m_nameBar = new QWidget(this);
+    m_nameBar->setObjectName(QStringLiteral("chooserNameBar"));
+    m_nameBar->setAttribute(Qt::WA_StyledBackground, true);
+    auto* nameLayout = new QHBoxLayout(m_nameBar);
+    nameLayout->setContentsMargins(8, 5, 8, 5);
+    nameLayout->setSpacing(8);
 
-    m_crumbHost = new QWidget(m_crumbScroll);
-    m_crumbHost->setObjectName(QStringLiteral("chooserBreadcrumbHost"));
-    m_crumbHost->setAttribute(Qt::WA_StyledBackground, true);
-    m_crumbLayout = new QHBoxLayout(m_crumbHost);
-    m_crumbLayout->setContentsMargins(8, 0, 8, 0);
-    m_crumbLayout->setSpacing(0);
-    m_crumbLayout->addStretch(1);
-    m_crumbScroll->setWidget(m_crumbHost);
-    mainLayout->addWidget(m_crumbScroll);
+    m_nameLabel = new QLabel(QStringLiteral("File name"), m_nameBar);
+    m_nameLabel->setFont(Theme::getMonospaceFont(9, QFont::Bold));
+    nameLayout->addWidget(m_nameLabel, 0, Qt::AlignVCenter);
+
+    // поле имени только для режима сохранения (PortalService SaveFile)
+    m_nameEdit = new QLineEdit(m_nameBar);
+    m_nameEdit->setObjectName(QStringLiteral("chooserNameEdit"));
+    m_nameEdit->setFont(Theme::getMonospaceFont(9));
+    m_nameEdit->setPlaceholderText(QStringLiteral("File name"));
+    m_nameEdit->setAutoFillBackground(false);
+    m_nameEdit->setMinimumWidth(220);
+    m_nameEdit->setFixedHeight(26);
+    m_nameEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_nameEdit->installEventFilter(this);
+    connect(m_nameEdit, &QLineEdit::returnPressed, this, [this]() { acceptCurrent(); });
+    nameLayout->addWidget(m_nameEdit, 1, Qt::AlignVCenter);
+    m_nameBar->hide();
+    mainLayout->addWidget(m_nameBar);
 
     // тело: тот же дизайн основного окна, панель закладок + 3 колонки файлов (родитель / текущая папка / превью)
     m_bodySplitter = new QSplitter(Qt::Horizontal, this);
@@ -114,7 +72,7 @@ void FileChooserDialog::setupUi() {
     m_bodySplitter->setSizes({190, 640});
     mainLayout->addWidget(m_bodySplitter, 1);
 
-    // навигация из колонок обновляет breadcrumb и активное место закладок
+    // навигация из колонок обновляет активное место закладок и путь внизу
     connect(m_miller, &MillerViewContainer::directoryChanged, this,
             [this](const std::filesystem::path& dir) { onDirectoryChanged(dir); });
     connect(m_bookmarksBar, &BookmarksBar::navigateRequested, this,
@@ -140,7 +98,7 @@ void FileChooserDialog::setupUi() {
         if (m_miller) m_miller->refresh();
     });
 
-    // низ: адресная строка как в основном окне, добавляется после кнопок
+    // низ: адресная строка, под ней кнопки Cancel/Open
     m_statusBar = new TuiStatusBar(this);
     connect(m_statusBar, &TuiStatusBar::pathEntered, this,
             [this](const std::filesystem::path& dir) { setDirectory(dir); });
@@ -151,7 +109,7 @@ void FileChooserDialog::setupUi() {
     connect(m_statusBar, &TuiStatusBar::filterDismissed, this, [this]() {
         if (m_miller) m_miller->setFilter(QString());
     });
-    // счётчик файлов отключён, на его месте справа живут кнопки Cancel/Open
+    // счётчик файлов отключён: снизу путь, действие подтверждается кнопками в нижней панели
     m_statusBar->setItemStatsVisible(false);
     connect(m_miller, &MillerViewContainer::messageEmitted, this,
             [this](const QString& msg) {
@@ -169,30 +127,29 @@ void FileChooserDialog::setupUi() {
                 if (m_statusBar) m_statusBar->activateFilterWithText(text);
             });
 
-    // поле имени только для режима сохранения (PortalService SaveFile)
-    m_nameEdit = new QLineEdit(this);
-    m_nameEdit->setObjectName(QStringLiteral("chooserNameEdit"));
-    m_nameEdit->setFont(Theme::getMonospaceFont(9));
-    m_nameEdit->setPlaceholderText(QStringLiteral("File name"));
-    m_nameEdit->setAutoFillBackground(false);
-    m_nameEdit->hide();
-    m_nameEdit->installEventFilter(this);
-    connect(m_nameEdit, &QLineEdit::returnPressed, this, [this]() { acceptCurrent(); });
-    mainLayout->addWidget(m_nameEdit);
-
     mainLayout->addWidget(m_statusBar);
 
-    // кнопки Cancel/Open прямо в нижней адресной строке, на месте счётчика файлов основного окна
-    m_cancelBtn = new QPushButton(QStringLiteral("Cancel"), this);
-    m_openBtn = new QPushButton(QStringLiteral("Open"), this);
+    m_actionBar = new QWidget(this);
+    m_actionBar->setObjectName(QStringLiteral("chooserActionBar"));
+    m_actionBar->setAttribute(Qt::WA_StyledBackground, true);
+    auto* actionLayout = new QHBoxLayout(m_actionBar);
+    actionLayout->setContentsMargins(8, 4, 8, 6);
+    actionLayout->setSpacing(8);
+    actionLayout->addStretch(1);
+
+    m_cancelBtn = new QPushButton(QStringLiteral("Cancel"), m_actionBar);
+    m_openBtn = new QPushButton(QStringLiteral("Open"), m_actionBar);
     m_cancelBtn->setObjectName(QStringLiteral("chooserCancelBtn"));
     m_openBtn->setObjectName(QStringLiteral("chooserOpenBtn"));
     m_cancelBtn->setAutoDefault(false);
     m_openBtn->setAutoDefault(false);
+    m_cancelBtn->setFixedHeight(26);
+    m_openBtn->setFixedHeight(26);
     connect(m_cancelBtn, &QPushButton::clicked, this, [this]() { emit closeRequested(); });
     connect(m_openBtn, &QPushButton::clicked, this, [this]() { acceptCurrent(); });
-    m_statusBar->addTrailingWidget(m_cancelBtn);
-    m_statusBar->addTrailingWidget(m_openBtn);
+    actionLayout->addWidget(m_cancelBtn, 0, Qt::AlignVCenter);
+    actionLayout->addWidget(m_openBtn, 0, Qt::AlignVCenter);
+    mainLayout->addWidget(m_actionBar);
 
     // Esc закрывает диалог из любого места, в т.ч. когда фокус в колонках
     auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -213,7 +170,6 @@ void FileChooserDialog::setupUi() {
     }
 
     updateTheme();
-    rebuildBreadcrumb();
 }
 
 void FileChooserDialog::setDirectory(const std::filesystem::path& dir) {
@@ -267,8 +223,8 @@ void FileChooserDialog::setAcceptLabel(const QString& label) {
 
 void FileChooserDialog::setSaveMode(bool enabled, const QString& initialName) {
     m_saveMode = enabled;
+    if (m_nameBar) m_nameBar->setVisible(enabled);
     if (m_nameEdit) {
-        m_nameEdit->setVisible(enabled);
         if (enabled) {
             m_nameEdit->setText(initialName);
         } else {
@@ -283,78 +239,17 @@ void FileChooserDialog::focusPrimaryInput() {
         m_nameEdit->setFocus();
         m_nameEdit->setCursorPosition(m_nameEdit->text().size());
     } else if (m_miller) {
-        m_miller->setFocus();
+        m_miller->focusCenter();
     }
 }
 
-// каталог колонок изменился: активное место в закладках и пересборка breadcrumb
+// каталог колонок изменился: активное место в закладках и путь внизу
 void FileChooserDialog::onDirectoryChanged(const std::filesystem::path& dir) {
     if (m_bookmarksBar) m_bookmarksBar->setActiveDirectory(dir);
     if (m_statusBar) {
         m_statusBar->setPath(dir);
         m_statusBar->setMountStats(dir);
     }
-    rebuildBreadcrumb();
-}
-
-void FileChooserDialog::rebuildBreadcrumb() {
-    if (!m_crumbLayout) return;
-
-    while (m_crumbLayout->count() > 0) {
-        QLayoutItem* item = m_crumbLayout->takeAt(0);
-        if (auto* w = item->widget()) {
-            // hide() сразу, deleteLater позже: иначе старые сегменты ещё кадр
-            // видны поверх новых и засвечиваются на скриншотах из grab()
-            w->hide();
-            w->deleteLater(); // клик по сегменту пересобирает его из своего же слота
-        }
-        delete item;
-    }
-    m_crumbLayout->addStretch(1);
-
-    const std::filesystem::path cur = currentDirectory();
-    if (cur.empty()) return;
-
-    // сегменты: корень (иконка диска без подписи) и каждый компонент пути
-    std::vector<std::filesystem::path> segments;
-    std::vector<QString> labels;
-    segments.push_back(cur.root_path().empty() ? std::filesystem::path("/") : cur.root_path());
-    labels.push_back(QString());
-    std::filesystem::path acc = segments.front();
-    for (const auto& part : cur.relative_path()) {
-        if (part.empty() || part == ".") continue;
-        acc /= part;
-        segments.push_back(acc);
-        labels.push_back(QString::fromUtf8(part.c_str()));
-    }
-
-    for (size_t i = 0; i < segments.size(); ++i) {
-        if (i > 0) {
-            auto* sep = new CrumbSeparator(m_crumbHost);
-            m_crumbLayout->insertWidget(m_crumbLayout->count() - 1, sep);
-        }
-        const bool isCurrent = (segments[i] == cur);
-        QString text = labels[i];
-        if (text.isEmpty()) text = Icons::Glyph::DriveDisk;
-
-        auto* btn = new QPushButton(text, m_crumbHost);
-        btn->setFont(Theme::getMonospaceFont(9, isCurrent ? QFont::Bold : QFont::Normal));
-        btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(crumbStyle(isCurrent));
-        btn->setToolTip(QString::fromUtf8(segments[i].c_str()));
-        const std::filesystem::path target = segments[i];
-        connect(btn, &QPushButton::clicked, this, [this, target]() {
-            if (target != currentDirectory()) setDirectory(target);
-        });
-        m_crumbLayout->insertWidget(m_crumbLayout->count() - 1, btn);
-    }
-
-    // длинный путь: правый (текущий) сегмент всегда видим
-    QPointer<QScrollArea> scroll = m_crumbScroll;
-    QTimer::singleShot(0, this, [scroll]() {
-        if (scroll && scroll->horizontalScrollBar())
-            scroll->horizontalScrollBar()->setValue(scroll->horizontalScrollBar()->maximum());
-    });
 }
 
 void FileChooserDialog::onFileActivated(const std::filesystem::path& path) {
@@ -435,15 +330,18 @@ void FileChooserDialog::acceptCurrent() {
 void FileChooserDialog::updateTheme() {
     using namespace Theme::Colors;
 
-    if (m_crumbScroll) {
-        m_crumbScroll->setStyleSheet(QString(
-            "QScrollArea#chooserBreadcrumb { background-color: %1; border: none; }")
-            .arg(Surface0().name()));
+    if (m_nameBar) {
+        m_nameBar->setStyleSheet(QString(
+            "QWidget#chooserNameBar { background-color: %1; border-bottom: 1px solid %2; }")
+            .arg(Surface0().name(), Surface1().name()));
     }
-    if (m_crumbHost) {
-        m_crumbHost->setStyleSheet(QString(
-            "QWidget#chooserBreadcrumbHost { background-color: %1; }")
-            .arg(Surface0().name()));
+    if (m_actionBar) {
+        m_actionBar->setStyleSheet(QString(
+            "QWidget#chooserActionBar { background-color: %1; border-top: 1px solid %2; }")
+            .arg(Base().name(), Surface1().name()));
+    }
+    if (m_nameLabel) {
+        m_nameLabel->setStyleSheet(QString("color: %1;").arg(Subtext().name()));
     }
     if (m_nameEdit) {
         m_nameEdit->setStyleSheet(QString(R"(
@@ -453,7 +351,6 @@ void FileChooserDialog::updateTheme() {
                 border: 1px solid %3;
                 border-radius: 0px;
                 padding: 3px 8px;
-                margin: 8px 14px 0px 14px;
             }
             QLineEdit:focus { border: 1px solid %4; }
         )").arg(Base().name(), InputFg().name(), InputBorder().name(), InputFocusBorder().name()));
@@ -484,7 +381,6 @@ void FileChooserDialog::updateTheme() {
         )").arg(Surface0().name(), Text().name(), Surface1().name()));
     }
     if (m_statusBar) m_statusBar->updateTheme();
-    rebuildBreadcrumb();
 }
 
 bool FileChooserDialog::eventFilter(QObject* watched, QEvent* event) {

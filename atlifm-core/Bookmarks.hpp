@@ -27,7 +27,7 @@ struct BookmarkItem {
     QString iconGlyph;
     QChar jumpKey{' '};
     BookmarkCategory category{BookmarkCategory::Place};
-    QString extraInfo; // например "284 GB free"
+    QString extraInfo;
     bool isSystemPlace{false};
 };
 
@@ -46,7 +46,7 @@ public:
         std::filesystem::create_directories(trashFilesDir, ec);
         list.push_back(BookmarkItem{"Bin", trashFilesDir, "\uf1f8", 'b', BookmarkCategory::Place, "", true});
 
-        // стандартные xdg папки
+        // стандартные папки
         auto addIfMissing = [&](QStandardPaths::StandardLocation loc, const QString& name, const QString& icon, QChar key) {
             QString p = QStandardPaths::writableLocation(loc);
             if (!p.isEmpty()) {
@@ -87,7 +87,7 @@ public:
                 continue;
             }
 
-            // только значимые для пользователя точки монтирования: корень, media, mnt или свои диски
+            // берем только корень и подключенные диски
             if (root != "/" && !root.startsWith("/run/media") && !root.startsWith("/media") && !root.startsWith("/mnt")) {
                 continue;
             }
@@ -97,7 +97,6 @@ public:
             item.category = BookmarkCategory::Drive;
             item.isSystemPlace = true;
 
-            // информация о свободном месте
             qint64 freeBytes = storage.bytesAvailable();
             double freeGb = static_cast<double>(freeBytes) / (1024.0 * 1024.0 * 1024.0);
             if (freeGb >= 1.0) {
@@ -107,7 +106,6 @@ public:
                 item.extraInfo = QString("%1 MB free").arg(QString::number(freeMb, 'f', 0));
             }
 
-            // общий объём для запасного имени тома
             qint64 totalBytes = storage.bytesTotal();
             double totalGb = static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
 
@@ -119,12 +117,11 @@ public:
                 QString name = storage.displayName();
                 QString rawFolder = QString::fromUtf8(item.path.filename().c_str());
 
-                // сырое hex/uuid имя без понятной метки (пример: 90BC4F42BC4F2258)
+                // если том назван сырым хексом то выводим размер
                 static const QRegularExpression uuidRegex("^[0-9A-Fa-f]{8,}$");
                 bool isRawUuid = uuidRegex.match(name).hasMatch() || uuidRegex.match(rawFolder).hasMatch();
 
                 if (isRawUuid || name.isEmpty() || name == root) {
-                    // понятное имя тома с общим объёмом: например "238 GB Volume"
                     if (totalGb >= 1.0) {
                         item.title = QString("%1 GB Volume").arg(QString::number(totalGb, 'f', 0));
                     } else {
@@ -138,7 +135,6 @@ public:
                 item.jumpKey = (!item.title.isEmpty()) ? item.title.front().toLower() : 'd';
             }
 
-            // не допускаем дубли путей
             bool exists = false;
             for (const auto& existing : list) {
                 if (existing.path == item.path) {
@@ -166,7 +162,6 @@ public:
         const auto& places = preloadedPlaces ? *preloadedPlaces : (localPlaces = loadPlaces());
         const auto& drives = preloadedDrives ? *preloadedDrives : (localDrives = loadDrives());
 
-        // пути мест и дисков, чтобы не допускать дублей
         std::unordered_set<std::string> knownPaths;
         for (const auto& p : places) {
             std::error_code ec;
@@ -252,7 +247,7 @@ public:
         const char* homeEnv = std::getenv("HOME");
         if (!homeEnv) return;
 
-        // пишем в тот же файл откуда читаем (gtk-4.0 или gtk-3.0), иначе закладка потеряется
+        // пишем в файл закладок гтк чтобы ничего не терялось
         std::filesystem::path homePath(homeEnv);
         std::filesystem::path configDir = homePath / ".config/gtk-4.0";
         std::error_code ec;
@@ -268,7 +263,6 @@ public:
         QString targetConfig = QString::fromUtf8((configDir / "bookmarks").c_str());
         QString fileUrl = QUrl::fromLocalFile(QString::fromUtf8(path.c_str())).toString(QUrl::FullyEncoded);
 
-        // дубликаты не пишем
         {
             QFile readFile(targetConfig);
             if (readFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -292,7 +286,7 @@ public:
         if (file.open(QIODevice::Append | QIODevice::Text)) {
             QTextStream out(&file);
             QString line = fileUrl;
-            // чистим переносы строк чтоб не поломать формат
+            // убираем переносы чтобы не сломать файл
             QString cleanTitle = title;
             cleanTitle.replace('\n', ' ');
             cleanTitle.replace('\r', ' ');
@@ -330,7 +324,7 @@ public:
                 if (!parts.isEmpty()) {
                     QUrl url(parts.first());
                     if (url.isLocalFile() && url.toLocalFile().toUtf8().toStdString() == pathStr) {
-                        continue; // удаляем
+                        continue;
                     }
                 }
                 lines << line;

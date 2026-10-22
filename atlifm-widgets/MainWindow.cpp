@@ -9,13 +9,21 @@
 #include "PropertiesDialog.hpp"
 #include "OpenWithDialog.hpp"
 #include "FileChooserDialog.hpp"
+#include "ConnectionDialog.hpp"
+#include "../atlifm-core/NetworkMount.hpp"
 #include "HelpDialog.hpp"
 #include "TuiOutputOverlay.hpp"
+#include "TasksOverlay.hpp"
+#include "BulkRenamePanel.hpp"
+#include "../atlifm-core/tasks/TaskManager.hpp"
 #include <QVBoxLayout>
 #include <QShortcut>
 #include <QKeySequence>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QSettings>
+#include <QFile>
+#include <QTimer>
 #include <QMenu>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -27,10 +35,32 @@
 #include <QAbstractSpinBox>
 #include <QStyleHints>
 #include <QPointer>
+#include <QHash>
 #include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <utility>
+
+namespace {
+
+// В тайлинговом WM размер окна задаёт композитор. Если приложение вызывает
+// resize() уже после show (сброс layout), Hyprland/Sway могут оставить окно
+// отдельным прямоугольником вместо тайла а на плавающих wm сброс по прежнему
+// возвращает размер из theme.conf.
+bool compositorManagesWindowSize() {
+    const QString platform = QGuiApplication::platformName();
+    if (platform.isEmpty() || platform == QLatin1String("offscreen") ||
+        platform == QLatin1String("minimal")) {
+        return false;
+    }
+    return qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE") ||
+           qEnvironmentVariableIsSet("SWAYSOCK") ||
+           qEnvironmentVariableIsSet("I3SOCK") ||
+           qEnvironmentVariableIsSet("NIRI_SOCKET") ||
+           qEnvironmentVariableIsSet("RIVER_SOCKET");
+}
+
+} // namespace
 
 namespace Widgets {
 
@@ -45,9 +75,11 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     });
 
     setWindowTitle("atlifm");
+    // Это ещё до show(): тайлинговый WM всё равно выдаст свой тайл, а на
+    // плавающем WM окно сразу откроется нормального размера.
     const auto& ui = Theme::uiConfig();
     resize(ui.windowWidth, ui.windowHeight);
-    // иконка вшита в resources.qrc; бары Wayland сопоставляют её по app-id,
+    // иконка вшита в ресурсы а бары вяленого сопоставляют ее по app id,
     // X11 напрямую; ставим на уровне окна для любого способа запуска
     setWindowIcon(QIcon(QStringLiteral(":/atlifm.png")));
 
@@ -97,8 +129,22 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
 }
 
 MainWindow::~MainWindow() {
+    // При уничтожении дочерних виджетов Qt меняет фокус и шлёт focusChanged;
+    // слот успевал обратиться к уже удалённым QShortcut/оверлеям. Отключаем
+    // глобальные сигналы и фильтр ещё до разрушения дерева.
+    if (qApp) {
+        qApp->removeEventFilter(this);
+        disconnect(qApp, nullptr, this, nullptr);
+    }
+    m_keybindShortcuts.clear();
+    m_textSensitiveShortcuts.clear();
+    m_contextSensitiveShortcuts.clear();
+
+    // Сначала выгружаем плагины, а потом задачи. Плагин при выгрузке может
+    // успеть создать задачу, и она не должна пережить QApplication.
     NativePluginHost::instance().setWindow(nullptr);
     NativePluginHost::instance().shutdownAll();
+    Core::Tasks::TaskManager::instance().waitForIdle(5000);
 }
 
 void MainWindow::applySystemTheme() {
@@ -129,6 +175,7 @@ void MainWindow::setupUi() {
     // 2. средний ряд: разделитель закладок (110..220) + колонки Miller;
     // левую панель можно сжать, при нехватке места она сжимается сама (см. resizeEvent)
     m_middleSplitter = new QSplitter(Qt::Horizontal, this);
+    m_middleSplitter->setObjectName(QStringLiteral("middleSplitter"));
     m_middleSplitter->setHandleWidth(2);
     m_middleSplitter->setChildrenCollapsible(false);
     m_middleSplitter->setOpaqueResize(true);
@@ -140,7 +187,7 @@ void MainWindow::setupUi() {
     // минимумы адаптивные (см. resizeEvent): в узком окне (<400px) снижаются до 48/140,
     // иначе сумма минимумов (302px) превышала ширину окна и рукоятка не двигалась
     m_bookmarksBar->setMinimumWidth(100);
-    m_bookmarksBar->setMaximumWidth(380);
+    m_bookmarksBar->setMaximumWidth(std::max(380, preferredSidebarWidth()));
 
     // движок Miller из трёх колонок
     m_millerView = new MillerViewContainer(m_middleSplitter);
@@ -152,7 +199,7 @@ void MainWindow::setupUi() {
     m_middleSplitter->addWidget(m_millerView);
     m_middleSplitter->setStretchFactor(0, 0);
     m_middleSplitter->setStretchFactor(1, 1);
-    m_middleSplitter->setSizes({Theme::uiConfig().sidebarWidth, std::max(200, width() - Theme::uiConfig().sidebarWidth)});
+    m_middleSplitter->setSizes({preferredSidebarWidth(), std::max(200, width() - preferredSidebarWidth())});
 
     rootLayout->addWidget(m_middleSplitter, 1);
 
@@ -169,26 +216,37 @@ void MainWindow::setupUi() {
     m_statusBar = new TuiStatusBar(this);
     rootLayout->addWidget(m_statusBar, 0);
 
+    // раскладка из theme.conf: бары/сайдбар/крайние колонки можно скрыть,
+    // а не только поменять ширину сайдбара
+    const auto& layoutUi = Theme::uiConfig();
+    m_tabBar->setVisible(layoutUi.showTabBar);
+    m_bookmarksBar->setVisible(layoutUi.showBookmarks);
+    m_bookmarksEnabled = layoutUi.showBookmarks;
+    m_statusBar->setVisible(layoutUi.showStatusBar);
+    m_millerView->setColumnsConfig(layoutUi.showParentColumn, layoutUi.showPreview,
+                                   layoutUi.parentColumnWidth, layoutUi.previewColumnWidth);
+
     // свойства (ПКМ→Properties, Alt+Enter, закладки) оверлей поверх всего окна:
     // «как внешнее окно», но часть одного окна; для корня диска/ФС внутри
     // автоматически раскрывается консоль Disk Usage
-    setupPropertiesOverlay();
     connect(m_millerView, &MillerViewContainer::propertiesRequested, this, &MainWindow::showPropertiesOverlay);
 
     // Open With… полноразмерный оверлей диалога (не подменю и не окно)
-    setupOpenWithOverlay();
-
-    // «Open In»: выбор файла приложения в собственном дизайне TUI поверх
-    // Open With (системный QFileDialog не используется)
-    setupFileChooserOverlay();
     connect(m_millerView, &MillerViewContainer::openWithDialogRequested, this, &MainWindow::showOpenWithOverlay);
     // Extract In…: меню просит выбор каталога, открываем тот же оверлей
     connect(m_millerView, &MillerViewContainer::extractInRequested, this, &MainWindow::showExtractChooserOverlay);
     connect(m_millerView, &MillerViewContainer::extractInPathRequested, this,
             &MainWindow::showExtractChooserOverlayFor);
+    connect(m_millerView, &MillerViewContainer::bulkRenameRequested, this,
+            &MainWindow::showBulkRenameOverlay);
 
-    // Cheat Sheet (F1/?) внутренний оверлей «как Disk Usage» с живым переназначением клавиш
-    setupHelpOverlay();
+    // фоновые задачи: агрегированный индикатор в статусбаре
+    connect(&Core::Tasks::TaskManager::instance(), &Core::Tasks::TaskManager::added,
+            this, [this](const Core::Tasks::TaskInfo&) { updateTaskSummary(); });
+    connect(&Core::Tasks::TaskManager::instance(), &Core::Tasks::TaskManager::updated,
+            this, [this](const Core::Tasks::TaskInfo&) { updateTaskSummary(); });
+    connect(&Core::Tasks::TaskManager::instance(), &Core::Tasks::TaskManager::finished,
+            this, [this](const Core::Tasks::TaskInfo&) { updateTaskSummary(); });
 
     // подключаем события панели вкладок
     connect(m_tabBar, &EngineTabBar::currentChanged, this, &MainWindow::onTabChanged);
@@ -211,6 +269,15 @@ void MainWindow::setupUi() {
     connect(m_bookmarksBar, &BookmarksBar::openInNewTabRequested, this, [this](const std::filesystem::path& p) {
         m_tabBar->addTab(p);
     });
+    connect(m_millerView, &MillerViewContainer::openInNewTabRequested, this,
+            [this](const std::filesystem::path& p) {
+                if (m_millerView &&
+                    m_millerView->tryPluginOverrideWith(QStringLiteral("open_in_new_tab"),
+                                                        {p}, p.parent_path())) {
+                    return;
+                }
+                if (m_tabBar) m_tabBar->addTab(p);
+            });
 
     connect(m_bookmarksBar, &BookmarksBar::filesDropped, this, [this](const auto& srcs, const auto& dest, auto act, auto mods) {
         QPointer<MainWindow> guard(this);
@@ -224,7 +291,7 @@ void MainWindow::setupUi() {
     connect(m_millerView, &MillerViewContainer::bookmarkAdded, this, [this](const std::filesystem::path& p) {
         m_bookmarksBar->addBookmark(p);
     });
-    // пункты меню закладок проходят через оверлей-диспетчер как одноимённые
+    // пункты меню закладок проходят через диспетчер оверлеев как одноименные
     // действия Miller (copy_path, remove_bookmark, clear_trash, properties)
     connect(m_bookmarksBar, &BookmarksBar::copyPathRequested, this, [this](const std::filesystem::path& p) {
         if (m_millerView->tryPluginOverrideWith(QStringLiteral("copy_path"), {p}, p)) return;
@@ -251,6 +318,24 @@ void MainWindow::setupUi() {
 
     // подключения Miller View
     connect(m_millerView, &MillerViewContainer::directoryChanged, this, &MainWindow::onDirectoryChanged);
+    connect(m_millerView, &MillerViewContainer::archiveEntered, this, [this](const std::filesystem::path& archive) {
+        // путь вкладки остаётся каталогом; в заголовке окна и вкладки показываем архив
+        const QString archiveQ = QString::fromUtf8(archive.c_str());
+        const QString name = QString::fromUtf8(archive.filename().c_str());
+        if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
+            m_tabBar->updateTabTitle(m_tabBar->currentIndex(), name);
+        }
+        setWindowTitle(QStringLiteral("atlifm: %1").arg(archiveQ));
+    });
+    connect(m_millerView, &MillerViewContainer::archiveLeft, this, [this](const std::filesystem::path& dir) {
+        const QString dirQ = QString::fromUtf8(dir.c_str());
+        const QString name = QString::fromUtf8(dir.filename().c_str());
+        if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
+            m_tabBar->updateTabTitle(m_tabBar->currentIndex(), name.isEmpty() ? dirQ : name);
+        }
+        if (m_statusBar) m_statusBar->setPath(dir);
+        setWindowTitle(QStringLiteral("atlifm: %1").arg(dirQ));
+    });
     connect(m_millerView, &MillerViewContainer::statusUpdated, this, &MainWindow::onStatusUpdated);
     connect(m_millerView, &MillerViewContainer::messageEmitted, this, [this](const QString& msg) {
         m_statusBar->setProgressMessage(msg);
@@ -268,9 +353,12 @@ void MainWindow::setupUi() {
     connect(m_millerView, &MillerViewContainer::filterTriggered, this, [this]() {
         m_statusBar->activateFilter();
     });
-
     // аппаратные боковые кнопки мыши из Miller View (override как у go_back/go_forward)
     connect(m_millerView, &MillerViewContainer::navigateHistoryBackRequested, this, [this]() {
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         if (m_millerView->tryPluginOverride(QStringLiteral("go_back"))) return;
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoBack()) {
@@ -279,6 +367,10 @@ void MainWindow::setupUi() {
         }
     });
     connect(m_millerView, &MillerViewContainer::navigateHistoryForwardRequested, this, [this]() {
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         if (m_millerView->tryPluginOverride(QStringLiteral("go_forward"))) return;
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoForward()) {
@@ -291,10 +383,36 @@ void MainWindow::setupUi() {
     connect(m_statusBar, &TuiStatusBar::pathEntered, this, [this](const std::filesystem::path& p) {
         m_millerView->setDirectory(p);
     });
+    connect(m_statusBar, &TuiStatusBar::networkLocationEntered, this,
+            &MainWindow::showConnectionOverlay);
     connect(m_statusBar, &TuiStatusBar::filterChanged, this, &MainWindow::onFilterChanged);
+    connect(m_statusBar, &TuiStatusBar::filterCommandChanged, this,
+            &MainWindow::onFilterCommandChanged);
+    connect(m_statusBar, &TuiStatusBar::filterSubmitted, this, &MainWindow::onFilterSubmitted);
     connect(m_statusBar, &TuiStatusBar::filterDismissed, this, [this]() {
+        if (m_filterSearchTimer) m_filterSearchTimer->stop();
+        if (m_keepGlobalResultsOnDismiss) {
+            m_keepGlobalResultsOnDismiss = false;
+            m_millerView->focusCenter();
+            return;
+        }
+        m_millerView->clearGlobalSearch();
         m_millerView->setFilter("");
     });
+
+    m_filterSearchTimer = new QTimer(this);
+    m_filterSearchTimer->setSingleShot(true);
+    m_filterSearchTimer->setInterval(220);
+    connect(m_filterSearchTimer, &QTimer::timeout, this, [this]() {
+        if (m_pendingSearchToken == QLatin1String("fd")) {
+            m_millerView->searchEverywhere(m_pendingSearchQuery);
+        } else if (m_pendingSearchToken == QLatin1String("rg")) {
+            m_millerView->searchContents(m_pendingSearchQuery);
+        }
+    });
+
+    refreshFilterCommands();
+    loadSavedLayout();
 }
 
 // оверлей свойств: «как внешнее окно», но часть этого же окна, плавающая панель
@@ -365,6 +483,7 @@ void MainWindow::showPropertiesOverlay(const std::filesystem::path& path) {
     // вызов из закладок или списка дисков не проходит через Miller, ещё одна точка override диспетчера
     if (!path.empty() && m_millerView->tryPluginOverrideWith(QStringLiteral("properties"), {path}, path))
         return;
+    if (!m_propsOverlay || !m_propsPage) setupPropertiesOverlay();
     if (!m_propsOverlay || !m_propsPage || path.empty()) return;
     // порядок важен: setPath пересчитывает режим консоли Disk Usage (корень диска/ФС),
     // positionPropertiesOverlay знает итоговую геометрию
@@ -399,9 +518,6 @@ void MainWindow::setupOpenWithOverlay() {
         if (m_millerView) m_millerView->setFocus();
     });
 
-    // «Choose application…»: свой выбор файла в стиле TUI вместо QFileDialog
-    connect(m_openWithPage, &OpenWithDialog::browseRequested, this, &MainWindow::showFileChooserOverlay);
-
     m_openWithOverlay->hide();
     positionOpenWithOverlay();
 }
@@ -424,6 +540,7 @@ void MainWindow::positionOpenWithOverlay() {
 }
 
 void MainWindow::showOpenWithOverlay(const std::filesystem::path& path) {
+    if (!m_openWithOverlay || !m_openWithPage) setupOpenWithOverlay();
     if (!m_openWithOverlay || !m_openWithPage || path.empty()) return;
     m_openWithPage->setFile(path);
     positionOpenWithOverlay();
@@ -432,9 +549,7 @@ void MainWindow::showOpenWithOverlay(const std::filesystem::path& path) {
     m_openWithPage->setFocus();
 }
 
-// «Open In»: свой диалог выбора файла в стиле TUI (сайдбар PLACES + список
-// в стиле колонок Miller), открывается поверх Open With по «Choose application…»;
-// Esc возвращает к списку приложений, выбор файла запускает его
+// диалог выбора файла в стиле tui для extract in и выбора ssh ключа а esc возвращает к предыдущему оверлею
 void MainWindow::setupFileChooserOverlay() {
     auto* central = centralWidget();
     if (!central) return;
@@ -455,20 +570,35 @@ void MainWindow::setupFileChooserOverlay() {
 
     connect(m_fileChooserPage, &FileChooserDialog::closeRequested, this, [this]() {
         if (m_fileChooserOverlay) m_fileChooserOverlay->hide();
-        // возврат к списку приложений, из которого открыли выбор файла
-        if (m_fileChooserForExtract) {
-            if (m_millerView) m_millerView->setFocus();
-        } else if (m_openWithPage && m_openWithOverlay && m_openWithOverlay->isVisible()) {
-            m_openWithPage->setFocus();
+        const bool wasSshKey = m_fileChooserForSshKey;
+        m_fileChooserForExtract = false;
+        m_fileChooserForSshKey = false;
+        m_extractArchiveOverride.clear();
+        if (wasSshKey) {
+            if (m_connectionDialog) {
+                m_connectionDialog->show();
+                m_connectionDialog->raise();
+                m_connectionDialog->focusSshKey();
+            }
         } else if (m_millerView) {
             m_millerView->setFocus();
         }
-        m_fileChooserForExtract = false;
-        m_extractArchiveOverride.clear();
+        updateShortcutAvailability(QApplication::focusWidget());
     });
-    // выбор подтверждён: приложение валидирует OpenWithDialog; каталог Extract In…
-    // запускает распаковку выделенного архива в выбранную папку
+    // выбор подтверждён: каталог Extract In… запускает распаковку выделенного
+    // архива в выбранную папку
     connect(m_fileChooserPage, &FileChooserDialog::fileChosen, this, [this](const QString& path) {
+        if (m_fileChooserForSshKey) {
+            m_fileChooserForSshKey = false;
+            if (m_fileChooserOverlay) m_fileChooserOverlay->hide();
+            if (m_connectionDialog) {
+                m_connectionDialog->show();
+                m_connectionDialog->raise();
+                m_connectionDialog->setSshKeyPath(path);
+            }
+            updateShortcutAvailability(QApplication::focusWidget());
+            return;
+        }
         if (m_fileChooserForExtract) {
             m_fileChooserForExtract = false;
             if (m_fileChooserOverlay) m_fileChooserOverlay->hide();
@@ -484,9 +614,6 @@ void MainWindow::setupFileChooserOverlay() {
             }
             return;
         }
-        if (!m_openWithPage) return;
-        if (!m_openWithPage->handleChosenApplication(path.toUtf8().toStdString())) return;
-        if (m_fileChooserOverlay) m_fileChooserOverlay->hide();
     });
 
     m_fileChooserOverlay->hide();
@@ -513,26 +640,36 @@ void MainWindow::positionFileChooserOverlay() {
     m_fileChooserOverlay->setGeometry((cw - w) / 2, (ch - h) / 2, w, h);
 }
 
-void MainWindow::showFileChooserOverlay() {
+void MainWindow::showSshKeyChooserOverlay(const QString& startPath) {
+    if (!m_fileChooserOverlay || !m_fileChooserPage) setupFileChooserOverlay();
     if (!m_fileChooserOverlay || !m_fileChooserPage) return;
-    // режим «выбор приложения» (Open With → Choose application…)
     m_fileChooserForExtract = false;
+    m_fileChooserForSshKey = true;
     m_extractArchiveOverride.clear();
     m_fileChooserPage->setDirectoryMode(false);
-    m_fileChooserPage->setAcceptLabel(QStringLiteral("Open"));
-    // старт каталог системных приложений .desktop (главная цель «open in»);
-    // фолбэк домашний каталог
-    std::filesystem::path start = "/usr/share/applications";
+    m_fileChooserPage->setMultipleSelectionEnabled(false);
+    m_fileChooserPage->setAcceptLabel(QStringLiteral("Select"));
+
+    std::filesystem::path start(startPath.toUtf8().toStdString());
     std::error_code ec;
-    if (!std::filesystem::is_directory(start, ec) || ec) {
+    if (!start.empty() && !std::filesystem::is_directory(start, ec)) {
+        ec.clear();
+        if (std::filesystem::is_regular_file(start, ec)) start = start.parent_path();
+    }
+    ec.clear();
+    if (start.empty() || !std::filesystem::is_directory(start, ec)) {
         const char* home = std::getenv("HOME");
-        start = home && *home ? home : "/";
+        const std::filesystem::path homePath = home && *home ? home : "/";
+        const std::filesystem::path sshDir = homePath / ".ssh";
+        ec.clear();
+        start = std::filesystem::is_directory(sshDir, ec) ? sshDir : homePath;
     }
     m_fileChooserPage->setDirectory(start);
     positionFileChooserOverlay();
     m_fileChooserOverlay->show();
     m_fileChooserOverlay->raise();
-    m_fileChooserPage->setFocus();
+    m_fileChooserPage->focusPrimaryInput();
+    updateShortcutAvailability(QApplication::focusWidget());
 }
 
 // Cheat Sheet: та же механика оверлея, что у свойств, панель с 2px рамкой
@@ -558,22 +695,31 @@ void MainWindow::setupHelpOverlay() {
     overlayLayout->addWidget(m_helpPage);
 
     connect(m_helpPage, &HelpDialog::closeRequested, this, [this]() {
+        // крестик можно нажать прямо во время захвата: без cancelCapture()
+        // все глобальные QShortcut останутся выключенными, а окно уже скрыто
+        if (m_helpPage && m_helpPage->isCapturing()) m_helpPage->cancelCapture();
         if (m_helpOverlay) m_helpOverlay->hide();
         if (m_millerView) m_millerView->setFocus();
+        updateShortcutAvailability(QApplication::focusWidget());
     });
     // живое применение переназначенных биндов (keybinds.conf пишет сам
     // HelpDialog через Core::Keybinds::saveUserBinding)
     connect(m_helpPage, &HelpDialog::keybindChanged, this, &MainWindow::reloadKeybinds);
-    // захват клавиш: гасим все шорткаты биндов, иначе комбинация сработает
-    // как действие вместо назначения; Esc/Backspace обрабатывает сам диалог
+    // захват клавиш: пока Cheat Sheet ждет комбинацию, все глобальные
+    // QShortcut выключены. Иначе alwaysActive F3/Ctrl+Q перехватят клавишу,
+    // и назначить ее будет нельзя. После захвата состояния восстанавливает
+    // updateShortcutAvailability
     connect(m_helpPage, &HelpDialog::captureChanged, this, [this](bool capturing) {
         if (capturing) {
             for (QShortcut* sc : std::as_const(m_keybindShortcuts)) {
                 if (sc) sc->setEnabled(false);
             }
-        } else {
-            updateShortcutAvailability(QApplication::focusWidget());
+            return;
         }
+        for (QShortcut* sc : std::as_const(m_keybindShortcuts)) {
+            if (sc) sc->setEnabled(true);
+        }
+        updateShortcutAvailability(QApplication::focusWidget());
     });
 
     m_helpOverlay->hide();
@@ -596,20 +742,404 @@ void MainWindow::positionHelpOverlay() {
     m_helpOverlay->setGeometry((cw - w) / 2, (ch - h) / 2, w, h);
 }
 
+void MainWindow::setupTasksOverlay() {
+    auto* central = centralWidget();
+    if (!central) return;
+
+    m_tasksOverlay = new TasksOverlay(central);
+    connect(m_tasksOverlay, &TasksOverlay::closeRequested, this, [this]() {
+        if (m_tasksOverlay) m_tasksOverlay->hide();
+        if (m_millerView) m_millerView->setFocus();
+        updateShortcutAvailability(QApplication::focusWidget());
+    });
+    m_tasksOverlay->hide();
+    positionTasksOverlay();
+}
+
+void MainWindow::positionTasksOverlay() {
+    if (!m_tasksOverlay) return;
+    m_tasksOverlay->repositionWithinParent();
+}
+
+void MainWindow::toggleTasksOverlay() {
+    if (!m_tasksOverlay) setupTasksOverlay();
+    if (!m_tasksOverlay) return;
+    if (m_tasksOverlay->isVisible()) {
+        m_tasksOverlay->hide();
+        if (m_millerView) m_millerView->setFocus();
+        updateShortcutAvailability(QApplication::focusWidget());
+        return;
+    }
+    m_tasksOverlay->refresh();
+    positionTasksOverlay();
+    m_tasksOverlay->show();
+    m_tasksOverlay->raise();
+    m_tasksOverlay->setFocus();
+    // Del, Enter и стрелки должны попадать в оверлей, а не в глобальные шорткаты.
+    updateShortcutAvailability(QApplication::focusWidget());
+}
+
+void MainWindow::setupConnectionOverlay() {
+    if (m_connectionDialog) return;
+    auto* central = centralWidget();
+    if (!central) return;
+
+    m_connectionDialog = new ConnectionDialog(central);
+    connect(m_connectionDialog, &ConnectionDialog::closeRequested, this, [this]() {
+        if (m_millerView) m_millerView->setFocus();
+        updateShortcutAvailability(QApplication::focusWidget());
+    });
+    connect(m_connectionDialog, &ConnectionDialog::connectRequested, this,
+            &MainWindow::connectNetwork);
+    connect(m_connectionDialog, &ConnectionDialog::sshKeyBrowseRequested, this,
+            &MainWindow::showSshKeyChooserOverlay);
+
+    m_networkMount = new Core::Network::NetworkMount(this);
+    connect(m_networkMount, &Core::Network::NetworkMount::mounted, this,
+            [this](const QString& localPath, const QString& uri) {
+                if (m_connectionDialog) {
+                    m_connectionDialog->hide();
+                    m_connectionDialog->setBusy(false);
+                }
+                const std::filesystem::path path(localPath.toUtf8().toStdString());
+                if (m_millerView) {
+                    std::error_code ec;
+                    if (std::filesystem::is_directory(path, ec)) {
+                        m_millerView->setDirectory(path);
+                    } else if (std::filesystem::exists(path, ec)) {
+                        m_millerView->setDirectory(path.parent_path());
+                        m_millerView->selectPathAfterRefresh(path);
+                    } else {
+                        m_millerView->setDirectory(path);
+                    }
+                    m_millerView->setFocus();
+                }
+                if (m_statusBar) {
+                    m_statusBar->setProgressMessage(
+                        uri.isEmpty() ? QStringLiteral("Connected") : QStringLiteral("Connected: %1").arg(uri));
+                }
+                updateShortcutAvailability(QApplication::focusWidget());
+            });
+    connect(m_networkMount, &Core::Network::NetworkMount::failed, this,
+            [this](const QString& message) {
+                if (!m_connectionDialog) return;
+                m_connectionDialog->showError(message);
+                m_connectionDialog->show();
+                m_connectionDialog->raise();
+                m_connectionDialog->setFocus();
+                updateShortcutAvailability(QApplication::focusWidget());
+            });
+
+    m_connectionDialog->hide();
+    positionConnectionOverlay();
+}
+
+void MainWindow::positionConnectionOverlay() {
+    if (!m_connectionDialog) return;
+    auto* central = centralWidget();
+    if (!central) return;
+    const int cw = central->width();
+    const int ch = central->height();
+    const int w = std::min(std::max(360, cw - 56), 600);
+    const int h = std::min(std::max(300, ch - 56), 500);
+    m_connectionDialog->setGeometry((cw - w) / 2, (ch - h) / 2, w, h);
+}
+
+void MainWindow::showConnectionOverlay(const QString& location) {
+    QString error;
+    Core::Network::Location parsed;
+    if (!Core::Network::parse(location, &parsed, &error)) {
+        if (m_statusBar) m_statusBar->setProgressMessage(error);
+        return;
+    }
+    setupConnectionOverlay();
+    if (!m_connectionDialog) return;
+
+    positionConnectionOverlay();
+    m_connectionDialog->open(parsed);
+    m_connectionDialog->show();
+    m_connectionDialog->raise();
+    m_connectionDialog->focusPrimaryInput();
+    updateShortcutAvailability(QApplication::focusWidget());
+}
+
+void MainWindow::connectNetwork(const Core::Network::Location& location) {
+    if (!m_connectionDialog) setupConnectionOverlay();
+    if (!m_networkMount) return;
+    m_connectionDialog->setBusy(true);
+    m_networkMount->mount(location);
+}
+
+void MainWindow::setupBulkRenameOverlay() {
+    auto* central = centralWidget();
+    if (!central) return;
+
+    m_bulkRenameOverlay = new QWidget(central);
+    m_bulkRenameOverlay->setObjectName(QStringLiteral("bulkRenameOverlay"));
+    m_bulkRenameOverlay->setAttribute(Qt::WA_StyledBackground, true);
+    m_bulkRenameOverlay->setStyleSheet(QString(
+        "QWidget#bulkRenameOverlay { background-color: %1; border: 2px solid %2; border-radius: 0px; }")
+        .arg(Theme::Colors::OverlayBg().name(), Theme::Colors::Accent().name()));
+
+    auto* layout = new QVBoxLayout(m_bulkRenameOverlay);
+    layout->setContentsMargins(2, 2, 2, 2);
+    layout->setSpacing(0);
+
+    m_bulkRenamePage = new BulkRenamePanel(m_bulkRenameOverlay);
+    layout->addWidget(m_bulkRenamePage, 1);
+
+    connect(m_bulkRenamePage, &BulkRenamePanel::accepted, this, [this]() {
+        const auto renames = m_bulkRenamePage ? m_bulkRenamePage->renames()
+                                              : std::vector<std::pair<std::filesystem::path,
+                                                                      std::filesystem::path>>{};
+        hideBulkRenameOverlay();
+        if (m_millerView && !renames.empty()) m_millerView->applyBulkRenames(renames);
+    });
+    connect(m_bulkRenamePage, &BulkRenamePanel::cancelled, this, [this]() {
+        hideBulkRenameOverlay();
+    });
+    connect(m_bulkRenamePage, &BulkRenamePanel::statusMessage, this, [this](const QString& text) {
+        if (m_statusBar) m_statusBar->setProgressMessage(text);
+    });
+
+    m_bulkRenameOverlay->hide();
+    positionBulkRenameOverlay();
+}
+
+void MainWindow::positionBulkRenameOverlay() {
+    if (!m_bulkRenameOverlay) return;
+    auto* central = centralWidget();
+    if (!central) return;
+
+    const int cw = central->width();
+    const int ch = central->height();
+    constexpr int kMargin = 32;
+    const int availW = std::max(360, cw - kMargin * 2);
+    const int availH = std::max(280, ch - kMargin * 2);
+    const int w = std::min(availW, std::clamp(cw * 72 / 100, 620, 980));
+    const int h = std::min(availH, std::clamp(ch * 74 / 100, 360, 720));
+    m_bulkRenameOverlay->setGeometry((cw - w) / 2, (ch - h) / 2, w, h);
+}
+
+void MainWindow::showBulkRenameOverlay(const std::vector<std::filesystem::path>& paths) {
+    if (paths.empty()) return;
+    if (m_statusBar && m_statusBar->isPromptActive()) return;
+    if (!m_bulkRenameOverlay || !m_bulkRenamePage) setupBulkRenameOverlay();
+    if (!m_bulkRenameOverlay || !m_bulkRenamePage) return;
+
+    m_bulkRenamePage->setPaths(paths);
+    positionBulkRenameOverlay();
+    m_bulkRenameOverlay->show();
+    m_bulkRenameOverlay->raise();
+    m_bulkRenamePage->focusFirstEdit();
+    updateShortcutAvailability(QApplication::focusWidget());
+}
+
+void MainWindow::hideBulkRenameOverlay(bool restoreFocus) {
+    if (m_bulkRenameOverlay) m_bulkRenameOverlay->hide();
+    if (restoreFocus && m_millerView) m_millerView->setFocus();
+    updateShortcutAvailability(QApplication::focusWidget());
+}
+
+void MainWindow::updateTaskSummary() {
+    if (!m_statusBar) return;
+    const auto tasks = Core::Tasks::TaskManager::instance().tasks();
+    int active = 0;
+    qint64 done = 0;
+    qint64 total = 0;
+    bool hasTotal = false;
+    for (const auto& task : tasks) {
+        if (task.state != Core::Tasks::State::Queued &&
+            task.state != Core::Tasks::State::Running) {
+            continue;
+        }
+        ++active;
+        if (task.total > 0) {
+            hasTotal = true;
+            done += std::clamp<qint64>(task.done, 0, task.total);
+            total += task.total;
+        }
+    }
+    if (active == 0) {
+        m_statusBar->setTaskSummary({});
+        return;
+    }
+    if (hasTotal && total > 0) {
+        const int pct = std::clamp<int>(static_cast<int>(done * 100 / total), 0, 100);
+        m_statusBar->setTaskSummary(QStringLiteral("TASKS %1 · %2%").arg(active).arg(pct));
+    } else {
+        m_statusBar->setTaskSummary(QStringLiteral("TASKS %1").arg(active));
+    }
+}
+
+QString MainWindow::layoutFilePath() const {
+    const QString dir = Theme::configDir();
+    return dir.isEmpty() ? QString() : dir + QStringLiteral("/layout.ini");
+}
+
+int MainWindow::preferredSidebarWidth() const {
+    return m_sidebarWidth > 0 ? m_sidebarWidth : Theme::uiConfig().sidebarWidth;
+}
+
+void MainWindow::loadSavedLayout() {
+    const QString path = layoutFilePath();
+    if (path.isEmpty()) return;
+    QSettings settings(path, QSettings::IniFormat);
+    if (!settings.value(QStringLiteral("layout/saved"), false).toBool()) return;
+
+    const auto& ui = Theme::uiConfig();
+    bool ok = false;
+    int w = settings.value(QStringLiteral("layout/window_width"), ui.windowWidth).toInt(&ok);
+    if (!ok || w < 400 || w > 7680) w = ui.windowWidth;
+    int h = settings.value(QStringLiteral("layout/window_height"), ui.windowHeight).toInt(&ok);
+    if (!ok || h < 300 || h > 4320) h = ui.windowHeight;
+    // setupUi() выполняется до show(); WM всё равно перетайлит окно.
+    resize(w, h);
+
+    int sidebar = settings.value(QStringLiteral("layout/sidebar_width"), ui.sidebarWidth).toInt(&ok);
+    m_sidebarWidth = std::clamp(ok ? sidebar : ui.sidebarWidth, 80, 800);
+
+    const bool showBookmarks =
+        settings.value(QStringLiteral("layout/show_bookmarks"), ui.showBookmarks).toBool();
+    m_bookmarksEnabled = showBookmarks;
+    m_bookmarksAutoHidden = false;
+    if (m_bookmarksBar) {
+        m_bookmarksBar->setMaximumWidth(std::max(380, preferredSidebarWidth()));
+        m_bookmarksBar->setVisible(showBookmarks);
+    }
+    if (m_tabBar) {
+        m_tabBar->setVisible(settings.value(QStringLiteral("layout/show_tabs"), ui.showTabBar).toBool());
+    }
+    if (m_statusBar) {
+        m_statusBar->setVisible(
+            settings.value(QStringLiteral("layout/show_status_bar"), ui.showStatusBar).toBool());
+    }
+    if (m_millerView) {
+        const bool showParent = settings.value(
+            QStringLiteral("layout/show_parent_column"), ui.showParentColumn).toBool();
+        const bool showPreview = settings.value(
+            QStringLiteral("layout/show_preview"), ui.showPreview).toBool();
+        int parent = settings.value(
+            QStringLiteral("layout/parent_width"), ui.parentColumnWidth).toInt(&ok);
+        if (!ok) parent = ui.parentColumnWidth;
+        int preview = settings.value(
+            QStringLiteral("layout/preview_width"), ui.previewColumnWidth).toInt(&ok);
+        if (!ok) preview = ui.previewColumnWidth;
+        m_millerView->setColumnsConfig(showParent, showPreview,
+                                       std::clamp(parent, 80, 10000),
+                                       std::clamp(preview, 80, 10000),
+                                       /*exactWidths=*/true);
+    }
+
+    // sizes() нельзя надёжно отложить до showEvent: resize() внутри конструктора
+    // может уже применить тему и выставить initial=true. Поэтому ширину
+    // сохранённого сайдбара задаём сразу.
+    m_initialSplitterSizesApplied = false;
+    if (m_middleSplitter && m_bookmarksBar &&
+        m_bookmarksEnabled && !m_bookmarksBar->isHidden()) {
+        const int handle = m_middleSplitter->handleWidth();
+        const int avail = std::max(0, width() - handle);
+        const int bookW = std::clamp(preferredSidebarWidth(), 80, std::max(80, avail / 2));
+        m_middleSplitter->setSizes({bookW, std::max(0, avail - bookW)});
+        m_initialSplitterSizesApplied = true;
+    }
+}
+
+void MainWindow::saveLayout() {
+    const QString path = layoutFilePath();
+    if (path.isEmpty()) return;
+
+    if (m_middleSplitter && m_bookmarksBar && m_bookmarksBar->isVisible()) {
+        const QList<int> sizes = m_middleSplitter->sizes();
+        if (!sizes.isEmpty() && sizes.front() > 0) {
+            m_sidebarWidth = std::clamp(sizes.front(), 80, 800);
+        }
+    }
+    const int sidebar = preferredSidebarWidth();
+
+    QSettings settings(path, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("layout/saved"), true);
+    settings.setValue(QStringLiteral("layout/window_width"), width());
+    settings.setValue(QStringLiteral("layout/window_height"), height());
+    settings.setValue(QStringLiteral("layout/sidebar_width"), sidebar);
+    settings.setValue(QStringLiteral("layout/show_bookmarks"), m_bookmarksEnabled);
+    settings.setValue(QStringLiteral("layout/show_tabs"), m_tabBar && m_tabBar->isVisible());
+    settings.setValue(QStringLiteral("layout/show_status_bar"),
+                      m_statusBar && m_statusBar->isVisible());
+    if (m_millerView) {
+        settings.setValue(QStringLiteral("layout/show_parent_column"),
+                          m_millerView->parentColumnEnabled());
+        settings.setValue(QStringLiteral("layout/show_preview"),
+                          m_millerView->previewColumnEnabled());
+        settings.setValue(QStringLiteral("layout/parent_width"),
+                          std::clamp(m_millerView->parentColumnWidth(), 80, 10000));
+        settings.setValue(QStringLiteral("layout/preview_width"),
+                          std::clamp(m_millerView->previewColumnWidth(), 80, 10000));
+    }
+    settings.sync();
+
+    if (m_statusBar) m_statusBar->setProgressMessage(QStringLiteral("Layout saved"));
+}
+
+void MainWindow::resetLayout() {
+    const QString path = layoutFilePath();
+    if (!path.isEmpty()) QFile::remove(path);
+
+    const auto& ui = Theme::uiConfig();
+    m_sidebarWidth = std::clamp(ui.sidebarWidth, 80, 800);
+    m_bookmarksEnabled = ui.showBookmarks;
+    m_bookmarksAutoHidden = false;
+    m_initialSplitterSizesApplied = false;
+
+    if (!compositorManagesWindowSize()) resize(ui.windowWidth, ui.windowHeight);
+    if (m_tabBar) m_tabBar->setVisible(ui.showTabBar);
+    if (m_statusBar) m_statusBar->setVisible(ui.showStatusBar);
+    if (m_bookmarksBar) {
+        m_bookmarksBar->setMaximumWidth(std::max(380, preferredSidebarWidth()));
+        m_bookmarksBar->setVisible(ui.showBookmarks);
+    }
+    if (m_millerView) {
+        m_millerView->setColumnsConfig(ui.showParentColumn, ui.showPreview,
+                                       ui.parentColumnWidth, ui.previewColumnWidth);
+    }
+
+    auto applySidebarSizes = [this]() {
+        if (!m_middleSplitter || !m_bookmarksBar) return;
+        const int avail = std::max(
+            0, m_middleSplitter->width() - m_middleSplitter->handleWidth());
+        if (avail <= 0) return;
+        int bookW = 0;
+        if (m_bookmarksEnabled && !m_bookmarksBar->isHidden()) {
+            bookW = std::clamp(preferredSidebarWidth(), 80, std::max(80, avail / 2));
+        }
+        m_middleSplitter->setSizes({bookW, std::max(0, avail - bookW)});
+        m_initialSplitterSizesApplied = true;
+    };
+    applySidebarSizes();
+    // show/hide баров и resize() меняют геометрию не сразу; повторяем после
+    // прохода раскладки иначе видны старые и новые панели одновременно
+    QTimer::singleShot(0, this, applySidebarSizes);
+
+    if (m_statusBar) m_statusBar->setProgressMessage(QStringLiteral("Layout default"));
+}
+
 void MainWindow::showExtractChooserOverlay() {
     m_extractArchiveOverride.clear();
+    if (!m_fileChooserOverlay || !m_fileChooserPage) setupFileChooserOverlay();
     if (!m_fileChooserOverlay || !m_fileChooserPage || !m_millerView) return;
     // Extract In…: тот же диалог «как open file», но в режиме каталогов
     // и с кнопкой Extract, старт текущая папка; выбор подтверждает обработчик
     // fileChosen (см. setupFileChooserOverlay), распаковка выделенного архива
     m_fileChooserForExtract = true;
+    m_fileChooserForSshKey = false;
     m_fileChooserPage->setDirectoryMode(true);
     m_fileChooserPage->setAcceptLabel(QStringLiteral("Extract"));
     m_fileChooserPage->setDirectory(m_millerView->currentDirectory());
     positionFileChooserOverlay();
     m_fileChooserOverlay->show();
     m_fileChooserOverlay->raise();
-    m_fileChooserPage->setFocus();
+    m_fileChooserPage->focusPrimaryInput();
+    updateShortcutAvailability(QApplication::focusWidget());
 }
 
 void MainWindow::showExtractChooserOverlayFor(const std::filesystem::path& archivePath) {
@@ -637,18 +1167,44 @@ void MainWindow::createKeybindShortcuts() {
     for (QShortcut* sc : std::as_const(m_keybindShortcuts))
         delete sc;
     m_keybindShortcuts.clear();
+    m_contextSensitiveShortcuts.clear();
 
     QList<QShortcut*> alwaysActive;
-    auto bind = [this, &alwaysActive](const QString& action, std::function<void()> fn) {
+    QHash<QString, QString> usedKeys; // канонический ключ в action id
+    auto bind = [this, &alwaysActive, &usedKeys](const QString& action, std::function<void()> fn) {
         auto wrappedFn = [this, action, fn]() {
             if (m_millerView && m_millerView->tryPluginOverride(action)) return;
             fn();
         };
         const bool always = Core::Keybinds::isAlwaysActive(action);
+        // path/filter остаются доступны из текстового поля, но уступают
+        // оверлеям и inline prompt, иначе Ctrl+L или Ctrl+F уведут фокус
+        // из открытого диалога
+        const bool contextSensitive = action == QLatin1String("focus_path") ||
+                                      action == QLatin1String("filter");
         for (const QString& key : Core::Keybinds::keysFor(action)) {
+            const QString canonical = QKeySequence(key).toString(QKeySequence::PortableText);
+            if (canonical.isEmpty()) continue;
+            // Два QShortcut на одну комбинацию Qt считает неоднозначными и
+            // может погасить оба. Оставляем первый бинд и предупреждаем,
+            // чтобы конфликт из plugin/config не отключал действие молча.
+            const auto used = usedKeys.constFind(canonical);
+            if (used != usedKeys.constEnd()) {
+                // дубль внутри одного действия (Alt+Return и Alt+Enter)
+                // безвреден а действие между разными командами грозит неоднозначным шорткатом
+                if (used.value() != action) {
+                    qWarning("[keybinds] duplicate shortcut %s for action %s skipped "
+                             "(already used by %s)",
+                             qUtf8Printable(canonical), qUtf8Printable(action),
+                             qUtf8Printable(used.value()));
+                }
+                continue;
+            }
+            usedKeys.insert(canonical, action);
             auto* sc = new QShortcut(QKeySequence(key), this);
             connect(sc, &QShortcut::activated, this, wrappedFn);
             if (always) alwaysActive.append(sc);
+            if (contextSensitive) m_contextSensitiveShortcuts.append(sc);
             m_keybindShortcuts.append(sc);
         }
     };
@@ -658,6 +1214,8 @@ void MainWindow::createKeybindShortcuts() {
         const char* home = std::getenv("HOME");
         m_tabBar->addTab(home ? home : "/");
     });
+
+    bind("open_in_new_tab", [this]() { m_millerView->openSelectionInNewTab(); });
 
     // закрыть вкладку (Ctrl+W / Ctrl+F4 по умолчанию)
     bind("close_tab", [this]() {
@@ -712,6 +1270,10 @@ void MainWindow::createKeybindShortcuts() {
 
     // родительский каталог (Alt+Up по умолчанию)
     bind("parent_dir", [this]() {
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         const auto& cur = m_millerView->currentDirectory();
         if (cur.has_parent_path() && cur != cur.parent_path()) {
             m_millerView->setDirectory(cur.parent_path());
@@ -720,6 +1282,10 @@ void MainWindow::createKeybindShortcuts() {
 
     // назад по истории
     bind("go_back", [this]() {
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoBack()) {
             tab.goBack();
@@ -729,6 +1295,10 @@ void MainWindow::createKeybindShortcuts() {
 
     // вперёд по истории
     bind("go_forward", [this]() {
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoForward()) {
             tab.goForward();
@@ -742,6 +1312,10 @@ void MainWindow::createKeybindShortcuts() {
         m_millerView->setDirectory(home ? home : "/");
     });
 
+    // первый/последний элемент центральной колонки (Home / End)
+    bind("first_item", [this]() { m_millerView->selectFirst(); });
+    bind("last_item", [this]() { m_millerView->selectLast(); });
+
     // переключить закладки / сайдбар (Ctrl+B / Ctrl+\ / F9 по умолчанию)
     bind("toggle_bookmarks", [this]() { toggleBookmarks(); });
 
@@ -752,7 +1326,10 @@ void MainWindow::createKeybindShortcuts() {
     bind("refresh", [this]() { m_millerView->refresh(); });
 
     // поиск / фильтр
-    bind("filter", [this]() { m_statusBar->activateFilter(); });
+    bind("filter", [this]() {
+        refreshFilterCommands();
+        m_statusBar->activateFilter();
+    });
 
     // показать или скрыть скрытые файлы (Ctrl+H / Ctrl+. по умолчанию)
     bind("toggle_hidden", [this]() { m_millerView->toggleHidden(); });
@@ -774,6 +1351,46 @@ void MainWindow::createKeybindShortcuts() {
     // отмена: Escape снимает подсказку ввода / активную файловую операцию / оверлеи / выделение
     bind("cancel", [this]() {
 
+        if (m_fileChooserOverlay && m_fileChooserOverlay->isVisible()) {
+            m_fileChooserOverlay->hide();
+            const bool wasSshKey = m_fileChooserForSshKey;
+            m_fileChooserForExtract = false;
+            m_fileChooserForSshKey = false;
+            m_extractArchiveOverride.clear();
+            if (wasSshKey) {
+                if (m_connectionDialog) {
+                    m_connectionDialog->show();
+                    m_connectionDialog->raise();
+                    m_connectionDialog->focusSshKey();
+                }
+            } else if (m_millerView) {
+                m_millerView->setFocus();
+            }
+            updateShortcutAvailability(QApplication::focusWidget());
+            return;
+        }
+
+        if (m_connectionDialog && m_connectionDialog->isVisible()) {
+            if (m_connectionDialog->isBusy()) return;
+            m_connectionDialog->hide();
+            if (m_millerView) m_millerView->setFocus();
+            updateShortcutAvailability(QApplication::focusWidget());
+            return;
+        }
+
+        // массовое переименование: Esc закрывает панель, ничего не меняя
+        if (m_bulkRenameOverlay && m_bulkRenameOverlay->isVisible()) {
+            hideBulkRenameOverlay();
+            return;
+        }
+
+        // TasksOverlay: Esc возвращает из лога к списку, иначе закрывает панель
+        if (m_tasksOverlay && m_tasksOverlay->isVisible()) {
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(m_tasksOverlay, &esc);
+            return;
+        }
+
         // Cheat Sheet (F1/?) самый «верхний» оверлей: Esc либо отменяет
         // захват клавиши, либо закрывает шпаргалку
         if (m_helpOverlay && m_helpOverlay->isVisible()) {
@@ -786,6 +1403,12 @@ void MainWindow::createKeybindShortcuts() {
             return;
         }
 
+        // вывод команды плагина в три панели и esc возвращает к колонкам
+        if (m_millerView && m_millerView->isPluginPanesVisible()) {
+            m_millerView->closePluginPanes();
+            return;
+        }
+
         // оверлей вывода плагина (Plugins) транзиентный, закрывается первым
         const auto outputs = findChildren<TuiOutputOverlay*>(Qt::FindDirectChildrenOnly);
         for (int i = outputs.size() - 1; i >= 0; --i) {
@@ -795,16 +1418,6 @@ void MainWindow::createKeybindShortcuts() {
             }
         }
 
-        // «Open In» поверх Open With: Esc закрывает выбор файла и возвращает
-        // к списку приложений (Extract In… просто к колонкам)
-        if (m_fileChooserOverlay && m_fileChooserOverlay->isVisible()) {
-            m_fileChooserOverlay->hide();
-            const bool wasExtract = m_fileChooserForExtract;
-            m_fileChooserForExtract = false;
-            m_extractArchiveOverride.clear();
-            if (!wasExtract && m_openWithPage) m_openWithPage->setFocus();
-            return;
-        }
         // оверлей Open With открыт: закрываем его, иначе QShortcut перехватит Esc до обработчика диалога
         if (m_openWithOverlay && m_openWithOverlay->isVisible()) {
             m_openWithOverlay->hide();
@@ -824,10 +1437,19 @@ void MainWindow::createKeybindShortcuts() {
             Dnd::DragDropHandler::cancelActiveOperation();
             return;
         }
+        // архив в центре: Esc возвращает к каталогу, не трогая выделение под ним
+        if (m_millerView->isArchiveViewActive()) {
+            m_millerView->leaveArchive();
+            return;
+        }
         m_millerView->clearSelection();
         // фильтр транзиентный: Esc снимает его вместе с редактором
         if (m_statusBar->isFilterActive()) {
+            if (m_statusBar->cancelFilterCommand()) return;
             m_statusBar->clearFilter();
+        }
+        if (m_millerView->hasGlobalSearch()) {
+            m_millerView->clearGlobalSearch();
         }
     });
 
@@ -884,11 +1506,21 @@ void MainWindow::createKeybindShortcuts() {
     // создать файл
     bind("new_file", [this]() { m_millerView->createNewFile(); });
 
+    // массовое создание файлов / папок
+    bind("create_bulk", [this]() { m_millerView->createBulkItems(); });
+
     // свойства
     bind("properties", [this]() { m_millerView->showProperties(); });
 
     // диалог помощи
     bind("help", [this]() { showHelpDialog(); });
+
+    // фоновые задачи: прогресс, отмена, лог
+    bind("tasks", [this]() { toggleTasksOverlay(); });
+
+    // раскладка: сохранить текущую / вернуть значения из theme.conf
+    bind("save_layout", [this]() { saveLayout(); });
+    bind("reset_layout", [this]() { resetLayout(); });
 
     // выход
     bind("quit", [this]() { close(); });
@@ -911,8 +1543,12 @@ void MainWindow::createKeybindShortcuts() {
     // состав textSensitive: как в setupShortcuts, печатные шорткаты уступают
     // ввод в текстовых полях, alwaysActive остаются; пересчитывается при каждом
     // пересоздании (после живого переназначения биндов из Cheat Sheet)
-    m_textSensitiveShortcuts = findChildren<QShortcut*>();
+    // только глобальные бинды этого окна, а не QShortcut внутри дочерних
+    // диалогов: иначе Esc и Ctrl+L самого FileChooserDialog тоже погаснут
+    m_textSensitiveShortcuts = m_keybindShortcuts;
     for (QShortcut* sc : std::as_const(alwaysActive))
+        m_textSensitiveShortcuts.removeAll(sc);
+    for (QShortcut* sc : std::as_const(m_contextSensitiveShortcuts))
         m_textSensitiveShortcuts.removeAll(sc);
 }
 
@@ -931,9 +1567,32 @@ static bool isTextInputWidget(QWidget* w) {
 }
 
 void MainWindow::updateShortcutAvailability(QWidget* focus) {
-    const bool typing = isTextInputWidget(focus);
+    // модальный слой забирает клавиатуру себе чтобы del не удалил файл в корзину за шпаргалкой а ctrl+c не скопировал файл мимо диалога
+    bool otherOverlayOpen = (m_tasksOverlay && m_tasksOverlay->isVisible()) ||
+                            (m_helpOverlay && m_helpOverlay->isVisible()) ||
+                            (m_openWithOverlay && m_openWithOverlay->isVisible()) ||
+                            (m_fileChooserOverlay && m_fileChooserOverlay->isVisible()) ||
+                            (m_propsOverlay && m_propsOverlay->isVisible()) ||
+                            (m_connectionDialog && m_connectionDialog->isVisible()) ||
+                            (m_bulkRenameOverlay && m_bulkRenameOverlay->isVisible()) ||
+                            (m_millerView && m_millerView->isPluginPanesVisible());
+    if (!otherOverlayOpen) {
+        const auto outputs = findChildren<TuiOutputOverlay*>(Qt::FindDirectChildrenOnly);
+        for (TuiOutputOverlay* ov : outputs) {
+            if (ov && ov->isVisible()) {
+                otherOverlayOpen = true;
+                break;
+            }
+        }
+    }
+    const bool promptActive = m_statusBar && m_statusBar->isPromptActive();
+    const bool typing = isTextInputWidget(focus) || otherOverlayOpen || promptActive;
     for (QShortcut* sc : std::as_const(m_textSensitiveShortcuts)) {
         if (sc) sc->setEnabled(!typing);
+    }
+    // esc и ctrl+q остаются глобальными а ctrl+l и ctrl+f не должны переключать фокус пока открыт оверлей или пароль
+    for (QShortcut* sc : std::as_const(m_contextSensitiveShortcuts)) {
+        if (sc) sc->setEnabled(!(otherOverlayOpen || promptActive));
     }
 }
 
@@ -945,12 +1604,16 @@ void MainWindow::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
 
     if (!m_initialSplitterSizesApplied && m_middleSplitter) {
-        int avail = m_middleSplitter->width();
+        // фиксируем факт первой раскладки даже в крошечном окне чтобы растягивание не применило дефолты повторно
+        m_initialSplitterSizesApplied = true;
+        const int avail = m_middleSplitter->width();
         if (avail >= 300) {
-            m_initialSplitterSizesApplied = true;
             const int kHandle = m_middleSplitter->handleWidth();
-            const int bookW = Theme::uiConfig().sidebarWidth;
-            m_middleSplitter->setSizes({bookW, avail - bookW - kHandle});
+            if (m_bookmarksBar && m_bookmarksEnabled && !m_bookmarksBar->isHidden()) {
+                const int bookW = std::clamp(preferredSidebarWidth(), 80,
+                                             std::max(80, avail / 2));
+                m_middleSplitter->setSizes({bookW, avail - bookW - kHandle});
+            }
         }
     }
 }
@@ -962,6 +1625,9 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     positionOpenWithOverlay();
     positionFileChooserOverlay();
     positionHelpOverlay();
+    positionTasksOverlay();
+    positionConnectionOverlay();
+    positionBulkRenameOverlay();
 
     // оверлеи вывода плагинов (Plugins) держатся правого нижнего угла окна
     const auto outputOverlays = findChildren<TuiOutputOverlay*>(Qt::FindDirectChildrenOnly);
@@ -988,7 +1654,8 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     const bool tiny = avail < 250;
     const bool tight = avail < 400;
     const int kBookMin = tiny ? 36 : (tight ? 48 : 100);
-    const int kBookPref = 160;
+    const int kBookPref = std::clamp(preferredSidebarWidth(), kBookMin,
+                                     std::max(kBookMin, avail / 2));
     const int kMillerMin = tiny ? 64 : (tight ? 140 : 200);
     if (m_bookmarksBar->minimumWidth() != kBookMin) m_bookmarksBar->setMinimumWidth(kBookMin);
     if (m_millerView->minimumWidth() != kMillerMin) m_millerView->setMinimumWidth(kMillerMin);
@@ -1000,16 +1667,18 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
             m_bookmarksBar->hide();
             m_bookmarksAutoHidden = true;
         }
-    } else if (m_bookmarksAutoHidden && !m_bookmarksBar->isVisible()) {
+    } else if (m_bookmarksEnabled && m_bookmarksAutoHidden && !m_bookmarksBar->isVisible()) {
         m_bookmarksBar->show();
         m_bookmarksAutoHidden = false;
     }
 
-    // задаём удобную начальную ширину (160px для панели закладок) при первой раскладке
+    // задаём удобную начальную ширину панели закладок при первой раскладке
     if (!m_initialSplitterSizesApplied && avail >= 300) {
         m_initialSplitterSizesApplied = true;
-        m_middleSplitter->setSizes({kBookPref, avail - kBookPref - kHandle});
-        return;
+        if (m_bookmarksEnabled && !m_bookmarksBar->isHidden()) {
+            m_middleSplitter->setSizes({kBookPref, avail - kBookPref - kHandle});
+            return;
+        }
     }
 
     // в узком окне (<400px) закладки ужимаются первыми, не шире половины окна
@@ -1030,6 +1699,31 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // задачи закрываются настроенным биндом tasks и пока оверлей открыт обрабатываем клавишу здесь независимо от фокуса
+    if (event->type() == QEvent::KeyPress && m_tasksOverlay && m_tasksOverlay->isVisible()) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const auto mods = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier |
+                                              Qt::MetaModifier | Qt::ShiftModifier);
+        bool closeKey = false;
+        for (const QString& binding : Core::Keybinds::keysFor(QStringLiteral("tasks"))) {
+            const QKeySequence seq(binding);
+            if (seq.count() != 1) continue;
+            if (key->key() == seq[0].key() && mods == seq[0].keyboardModifiers()) {
+                closeKey = true;
+                break;
+            }
+        }
+        const bool higherOverlay =
+            (m_helpOverlay && m_helpOverlay->isVisible()) ||
+            (m_openWithOverlay && m_openWithOverlay->isVisible()) ||
+            (m_fileChooserOverlay && m_fileChooserOverlay->isVisible()) ||
+            (m_propsOverlay && m_propsOverlay->isVisible()) ||
+            (m_bulkRenameOverlay && m_bulkRenameOverlay->isVisible());
+        if (closeKey && !higherOverlay) {
+            toggleTasksOverlay();
+            return true;
+        }
+    }
     if (event->type() == QEvent::MouseButtonPress) {
         auto* mouseEvent = static_cast<QMouseEvent*>(event);
         if (mouseEvent->button() == Qt::BackButton) {
@@ -1054,9 +1748,20 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void MainWindow::toggleBookmarks() {
-    if (m_bookmarksBar) {
-        m_bookmarksAutoHidden = false;
-        m_bookmarksBar->setVisible(!m_bookmarksBar->isVisible());
+    if (!m_bookmarksBar) return;
+    m_bookmarksAutoHidden = false;
+    m_bookmarksEnabled = !m_bookmarksBar->isVisible();
+    m_bookmarksBar->setVisible(m_bookmarksEnabled);
+
+    // если запустились без закладок то ширина могла остаться нулевой и при включении возвращаем настроенный размер
+    if (m_bookmarksEnabled && m_middleSplitter) {
+        const QList<int> sizes = m_middleSplitter->sizes();
+        if (sizes.size() == 2 && sizes[0] < 40) {
+            const int avail = m_middleSplitter->width() - m_middleSplitter->handleWidth();
+            const int bookW = std::clamp(preferredSidebarWidth(), 80,
+                                         std::max(80, avail / 2));
+            m_middleSplitter->setSizes({bookW, std::max(0, avail - bookW)});
+        }
     }
 }
 
@@ -1090,6 +1795,7 @@ void MainWindow::showQuickJumpMenu() {
 
 void MainWindow::showHelpDialog() {
     if (m_statusBar && m_statusBar->isPromptActive()) return;
+    if (!m_helpOverlay || !m_helpPage) setupHelpOverlay();
     if (!m_helpOverlay || !m_helpPage) return;
     // пересобрать строки: таблица биндов и плагины могли измениться
     if (m_helpPage->isCapturing()) m_helpPage->cancelCapture();
@@ -1154,12 +1860,18 @@ void MainWindow::restoreTabState(int index) {
 
 void MainWindow::onTabChanged(int index) {
     if (index < 0 || index >= m_tabBar->count()) return;
+    // архив живёт только в текущей вкладке; при переключении возвращаемся в каталог
+    if (m_millerView && m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
     saveCurrentTabState();
     restoreTabState(index);
+    // archiveLeft мог обновить заголовок уже выбранной вкладки: синхронизируем с её каталогом
+    if (m_millerView && !m_millerView->currentDirectory().empty()) {
+        onDirectoryChanged(m_millerView->currentDirectory());
+    }
 }
 
 void MainWindow::onTabCloseRequested(int index) {
-    // крестик/средняя кнопка на вкладке тоже override-точка (как Ctrl+W)
+    // крестик или средняя кнопка на вкладке тоже точка переопределения как закрытие вкладки
     if (m_millerView && m_millerView->tryPluginOverride(QStringLiteral("close_tab"))) return;
     if (m_tabBar->count() <= 1) {
         const char* home = std::getenv("HOME");
@@ -1237,8 +1949,104 @@ void MainWindow::onStatusUpdated(int currentIndex, int totalItems, int selectedI
     m_statusBar->setItemStats(currentIndex, totalItems, selectedItems);
 }
 
+void MainWindow::refreshFilterCommands() {
+    QStringList tokens{QStringLiteral("fd"), QStringLiteral("rg")};
+    m_filterPluginCommands.clear();
+
+    auto addCommand = [this, &tokens](const Core::Plugins::Plugin& plugin) {
+        const QString token = plugin.command.trimmed().toLower();
+        if (token.isEmpty() || tokens.contains(token)) return;
+        FilterPluginCommand command;
+        command.pluginId = plugin.id;
+        command.actionId = plugin.action;
+        command.title = plugin.commandTitle.isEmpty() ? plugin.name : plugin.commandTitle;
+        command.mode = plugin.commandMode.isEmpty() ? QStringLiteral("action") : plugin.commandMode;
+        command.native = plugin.native;
+        m_filterPluginCommands.insert(token, command);
+        tokens << token;
+    };
+
+    for (const auto& plugin : Core::Plugins::load()) addCommand(plugin);
+    for (const auto& plugin : NativePluginHost::instance().manifests()) addCommand(plugin);
+    if (m_statusBar) m_statusBar->setFilterCommands(tokens);
+}
+
+void MainWindow::runFilterPluginCommand(const FilterPluginCommand& command, const QString& query) {
+    if (!m_millerView) return;
+    if (command.native) {
+        m_millerView->runNativePluginCommand(command.actionId, query);
+    } else {
+        m_millerView->runPluginCommand(command.pluginId, query);
+    }
+}
+
+void MainWindow::beginPluginPanes(const QString& title) {
+    if (m_millerView) m_millerView->beginPluginPanes(title);
+}
+
+void MainWindow::appendPluginPanesOutput(const QByteArray& data) {
+    if (m_millerView) m_millerView->appendPluginPanesOutput(data);
+}
+
+void MainWindow::appendPluginPaneOutput(int pane, const QByteArray& data) {
+    if (m_millerView) m_millerView->appendPluginPaneOutput(pane, data);
+}
+
+void MainWindow::finishPluginPanes(int exitCode) {
+    if (m_millerView) m_millerView->finishPluginPanes(exitCode);
+}
+
 void MainWindow::onFilterChanged(const QString& filter) {
+    if (m_filterSearchTimer) m_filterSearchTimer->stop();
+    m_keepGlobalResultsOnDismiss = false;
+    m_millerView->clearGlobalSearch();
     m_millerView->setFilter(filter);
+}
+
+void MainWindow::onFilterCommandChanged(const QString& token, const QString& query) {
+    if (token == QLatin1String("fd") || token == QLatin1String("rg")) {
+        m_pendingSearchToken = token;
+        m_pendingSearchQuery = query;
+        if (m_filterSearchTimer) m_filterSearchTimer->stop();
+        if (query.trimmed().isEmpty()) {
+            m_millerView->clearGlobalSearch();
+            return;
+        }
+        if (m_filterSearchTimer) m_filterSearchTimer->start();
+    }
+}
+
+void MainWindow::onFilterSubmitted() {
+    if (!m_statusBar) return;
+    const QString token = m_statusBar->filterCommand();
+    const QString query = m_statusBar->filterQuery();
+    if (token.isEmpty()) {
+        m_statusBar->deactivateFilter();
+        return;
+    }
+
+    if (token == QLatin1String("fd") || token == QLatin1String("rg")) {
+        if (m_filterSearchTimer) m_filterSearchTimer->stop();
+        if (query.trimmed().isEmpty()) {
+            m_millerView->clearGlobalSearch();
+            m_statusBar->deactivateFilter();
+            return;
+        }
+        if (token == QLatin1String("fd")) {
+            m_millerView->searchEverywhere(query);
+        } else {
+            m_millerView->searchContents(query);
+        }
+        m_keepGlobalResultsOnDismiss = true;
+        m_statusBar->deactivateFilter();
+        return;
+    }
+
+    const auto it = m_filterPluginCommands.constFind(token);
+    if (it != m_filterPluginCommands.constEnd()) {
+        runFilterPluginCommand(*it, it->mode == QLatin1String("query") ? query : QString());
+    }
+    m_statusBar->deactivateFilter();
 }
 
 }

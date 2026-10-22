@@ -12,12 +12,12 @@ struct IconInfo {
     QColor color;
 };
 
-// подбирает глиф Nerd Font и цвет по правилам пресетов
+// подбор значка nerd font и цвета
 IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
                  bool isSymlink = false, bool isOpen = false,
                  std::optional<bool> isExecutableHint = std::nullopt);
 
-// Nerd Font глифы для интерфейса
+// значки nerd font для интерфейса
 namespace Glyph {
     inline const QString FolderClosed{"\ue5ff"};
     inline const QString FolderOpen{"\ue5fe"};

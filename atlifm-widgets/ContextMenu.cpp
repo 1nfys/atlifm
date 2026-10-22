@@ -100,8 +100,18 @@ void TuiContextMenu::populateMenu() {
             }
         });
 
-        auto actSudoOpen = addAction("\U000F05D7 Sudo Open");
-        connect(actSudoOpen, &QAction::triggered, this, &TuiContextMenu::sudoOpenRequested);
+        bool hasDirectory = false;
+        for (const auto& path : m_selectedPaths) {
+            std::error_code ec;
+            if (std::filesystem::is_directory(path, ec)) {
+                hasDirectory = true;
+                break;
+            }
+        }
+        auto actOpenTab = addAction("\U000F04E6 Open in New Tab\tCtrl+Return");
+        actOpenTab->setShortcut(QKeySequence("Ctrl+Return"));
+        actOpenTab->setEnabled(hasDirectory);
+        connect(actOpenTab, &QAction::triggered, this, &TuiContextMenu::openInNewTabRequested);
 
         addSeparator();
 
@@ -243,6 +253,10 @@ void TuiContextMenu::populateMenu() {
         actNewFile->setShortcut(QKeySequence("Ctrl+Alt+N"));
         connect(actNewFile, &QAction::triggered, this, &TuiContextMenu::newFileRequested);
 
+        auto actOpenTab = addAction("\U000F04E6 Open Current Folder in New Tab\tCtrl+Return");
+        actOpenTab->setShortcut(QKeySequence("Ctrl+Return"));
+        connect(actOpenTab, &QAction::triggered, this, &TuiContextMenu::openInNewTabRequested);
+
         addSeparator();
 
         auto actPaste = addAction("\U000F0192 Paste\tCtrl+V");
@@ -254,9 +268,6 @@ void TuiContextMenu::populateMenu() {
 
         auto actTerminal = addAction("\U000F0A36 Open Terminal Here\tF4");
         connect(actTerminal, &QAction::triggered, this, &TuiContextMenu::openTerminalRequested);
-
-        auto actSudoOpen = addAction("\U000F05D7 Sudo Open");
-        connect(actSudoOpen, &QAction::triggered, this, &TuiContextMenu::sudoOpenRequested);
 
         if (inTrash) {
             auto actClearTrash = addAction("\U000F0A7A Clear Bin");

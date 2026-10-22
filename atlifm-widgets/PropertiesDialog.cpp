@@ -483,9 +483,9 @@ void PropertiesDialog::loadFileInfo() {
     }
 }
 
-// вес каталога для компактных свойств: один асинхронный `du -s -b`. При
-// отказе (закрытая папка) молчаливая проба `sudo -n`, только если жив
-// тикет sudo; никаких диалогов и запросов пароля из окна свойств
+// вес каталога для компактных свойств: один асинхронный du sb
+// при отказе молчаливая проба sudo только если жив
+// тикет sudo и никаких диалогов пароля из окна свойств
 void PropertiesDialog::startPathWeightScan() {
     stopPathWeightProc();
     ++m_weightJob;
@@ -518,7 +518,7 @@ void PropertiesDialog::runPathWeightProc(bool viaSudo) {
             const qint64 v = num.trimmed().toLongLong(&ok);
             if (ok) bytes = v;
         }
-        // du -s печатает итог даже при частичных ошибках доступа, берём его
+        // du печатает итог даже при частичных ошибках доступа и берем его
         if (bytes >= 0 && status == QProcess::NormalExit) {
             m_sizeLabel->setText(Core::XdgUtils::formatSize(uintmax_t(bytes)));
             if (code != 0 && !err.isEmpty()) m_sizeLabel->setToolTip(err);
@@ -716,10 +716,10 @@ void PropertiesDialog::startDiskUsageScan() {
         m_diskBaseHtml = base;
     }
 
-    // подкаталоги первого уровня: для счётчика прогресса и строк «?» (тот же
-    // уровень, что и `du -d 1`); симлинки du не обходит и мы пропускаем
-    // в счётчик прогресса идут только каталоги той же ФС (du -x не выходит
-    // на другие ФС), иначе счётчик застревал бы на детях точки монтирования
+    // подкаталоги первого уровня: для счетчика прогресса и строк со знаком вопроса
+    // уровень что и du первого уровня а симлинки du не обходит и мы пропускаем
+    // в счетчик прогресса идут только каталоги той же файловой системы
+    // иначе счетчик застревал бы на детях точки монтирования
     {
         struct stat rootSt {};
         const bool haveRootSt = (::stat(m_path.c_str(), &rootSt) == 0);
@@ -742,9 +742,9 @@ void PropertiesDialog::startDiskUsageScan() {
                     ++m_diskTotalDirs;
                     m_diskProgressChildren.insert(name);
                 }
-                // виртуальные ФС ядра: сразу 0 B, без «?»; дети точки монтирования
-                // (другая ФС или подмонтированный сабволюм) du -x пропускает,
-                // домерит отдельная волна без root
+                // виртуальные файловые системы ядра сразу 0 байт
+                // другую файловую систему или сабволюм du пропускает
+                // и их домерит отдельная волна без root
                 const QStorageInfo childStorage(QString::fromUtf8(entry.path().c_str()));
                 const QString childClean = QDir::cleanPath(QString::fromUtf8(entry.path().c_str()));
                 if (childStorage.isValid() && isVirtualKernelFs(childStorage)) {
@@ -762,10 +762,9 @@ void PropertiesDialog::startDiskUsageScan() {
 
     renderDiskUsage(); // шапка + заголовок таблицы + чип scanning сразу
 
-    // медленные ФС (NTFS через ntfs-3g/FUSE; на btrfs/ext4 du «летает», тут
-    // упирается в latency отдельных запросов FUSE): последовательный du по
-    // всему корню слишком медленный, подпапки первого уровня сканируются
-    // параллельной волной `du -s -b -x` (тот же формат записей и парсер)
+    // медленные файловые системы ntfs через fuse на которых du тормозит
+    // последовательный du по всему корню слишком медленный
+    // поэтому подпапки первого уровня сканируются параллельной волной du
     const bool slowFs = fsTypeStr.contains(QLatin1String("ntfs"), Qt::CaseInsensitive)
                      || fsTypeStr.contains(QLatin1String("fuseblk"), Qt::CaseInsensitive);
     if (slowFs && m_diskChildren.size() >= 2) {
@@ -810,19 +809,17 @@ void PropertiesDialog::killDiskPhaseProcs() {
     }
 }
 
-// лимиты фазы: кап по простою убивает du только после 30 с тишины (каждый поток
-// вывода продлевает таймер, медленные ФС вроде NTFS через ntfs-3g сканируют
-// минуты, но не молчат), абсолютный кап (10 мин) ставится один раз на фазу;
-// таймер привязан к фазе (normal/sudo), смена фазы обнуляет старый таймер
+// лимиты фазы: кап по простою убивает процесс после паузы в выводе
+// а медленные файловые системы вроде ntfs сканируют минуты но не молчат
+// таймер привязан к фазе и смена фазы обнуляет старый таймер
 void PropertiesDialog::armDiskScanCap(uint64_t job, bool sudoPhase) {
     m_diskCapClock.start();
     QPointer<PropertiesDialog> self(this);
     QTimer::singleShot(kDiskScanCapMs, this, [self, job, sudoPhase]() {
         if (!self || self->m_diskScanJob.load() != job || !self->m_diskScanning) return;
         if (self->m_diskSudoPhase != sudoPhase) return; // фаза сменилась, таймер устарел
-        // pkexec ждёт ответа системного диалога, а батч du -s выдаёт первую
-        // запись только в конце каталога тишина тут не признак зависания
-        // (общий страховочный кап остаётся абсолютным)
+        // pkexec ждет ответа системного диалога а батч du выдает первую
+        // запись только в конце каталога и тишина тут не признак зависания
         if (self->m_diskSudoPkexec || self->m_diskSudoBatchRunning) return;
         self->killDiskPhaseProcs();
     });
@@ -847,22 +844,19 @@ void PropertiesDialog::rearmDiskScanCapIfActive() {
     armDiskScanCap(m_diskScanJob.load(), m_diskSudoPhase);
 }
 
-    // полная фаза root только для закрытого корня, когда листинг невозможен
-    // без root: потоковый привилегированный `du -x -d1`. Живой тикет → `sudo -n`
-    // молча; иначе один pkexec (системный диалог пароля); отказ диалога разбирает
-    // onDiskDuFinished → declineSudoAuthorization (повторно не спрашиваем), а
-    // недоступность полкита fallbackToInlinePassword
+    // полная фаза root только для закрытого корня когда листинг невозможен
+    // без root: потоковый привилегированный du где живой тикет запускает sudo
+    // молча иначе один pkexec системный диалог пароля а отказ диалога разбирает
+    // declineSudoAuthorization и повторно не спрашиваем
 void PropertiesDialog::startSudoDiskUsage() {
     const QStringList duCmd{"du", "-x", "-d", "1", "-b", "--null", "--", QString::fromUtf8(m_path.c_str())};
     startSudoPhaseProc(m_diskSudoPkexec ? Core::XdgUtils::pkexecArgs(duCmd)
                                         : Core::XdgUtils::rootArgs(duCmd), false);
 }
 
-// батч закрытых папок: один привилегированный вызов на весь добор,
-// `sh -c 'du -s -b --null -- "$@"'` со всеми путями; одна авторизация полкита
-// = один системный диалог (политика auth_admin без keep переспрашивала бы
-// пароль на каждую папку). Записи того же формата NUL, что у потокового du,
-// поэтому парсер и таблица общие
+// батч закрытых папок: один привилегированный вызов на весь добор
+// со всеми путями где одна авторизация полкита дает один системный диалог
+// записи того же формата что у потокового du поэтому парсер и таблица общие
 void PropertiesDialog::startSudoBatch() {
     // путь du подставляется в скрипт sh, который исполняется как root:
     // PATH пользователя не должен влиять на то, что запустится от root
@@ -880,9 +874,9 @@ void PropertiesDialog::startSudoBatch() {
 }
 
 // общий запуск привилегированной фазы: процесс живёт в m_diskProc, поэтому
-// парсер/рендер/капы работают без отдельной ветки. batch=true батч закрытых
-// папок (du -s по каждой: запись появляется только в конце каталога, поэтому
-// вместо капа по простою мягкий общий кап kDiskBatchCapMs)
+// парсер и таблица работают без отдельной ветки а batch равен true для закрытых
+// папок где запись появляется только в конце каталога поэтому
+// вместо капа по простою используется мягкий общий кап
 void PropertiesDialog::startSudoPhaseProc(const QStringList& argv, bool batch) {
     stopDiskUsageProc();
     m_diskSudoPhase = true;
@@ -943,9 +937,8 @@ void PropertiesDialog::startSudoPhaseProc(const QStringList& argv, bool batch) {
 
 // ================= параллельная волна: медленные ФС (NTFS/FUSE) =================
 
-// очередь подпапок первого уровня + до kDiskParallelMax одновременных
-// `du -s -b -x --null`; записи того же формата, что у одиночного du,
-// поэтому таблица и прогресс работают без изменений
+// очередь подпапок первого уровня и одновременный запуск du
+// записи того же формата что у одиночного вызова поэтому таблица работает без изменений
 void PropertiesDialog::startParallelDiskScan() {
     QStringList names(m_diskChildren.cbegin(), m_diskChildren.cend());
     names.sort(Qt::CaseInsensitive);
@@ -956,10 +949,10 @@ void PropertiesDialog::startParallelDiskScan() {
     startDiskChildWave(names);
 }
 
-// волна поштучных `du -s -b -x --null` без root по указанным подпапкам:
-// NTFS все дети сразу; для остальных ФС дети точки монтирования, которые
-// потоковый `du -x -d1` пропускает как чужую ФС. stderr парсится:
-// «Permission denied» → папка уходит в restricted, дальше
+// волна поштучных du без root по указанным подпапкам
+// ntfs все дети сразу а для остальных файловых систем дети точки монтирования
+// которых потоковый du пропускает как чужую файловую систему а ошибки доступа
+// отправляют папку в список закрытых
 // её домерит очередь sudo
 void PropertiesDialog::startDiskChildWave(const QStringList& names) {
     m_diskParallelMode = true;
@@ -1021,9 +1014,8 @@ void PropertiesDialog::onParallelDuOutput(QProcess* proc) {
     }
 }
 
-// stderr одного du волны: раздельный буфер процесса, «Permission denied» →
-// restricted (очередь sudo домерит закрытые; для NTFS-волны это единственный
-// путь обнаружения, потокового du там нет)
+// ошибки доступа одного процесса волны отправляют путь в закрытые
+// где очередь sudo домерит закрытые а для ntfs волны это единственный путь
 void PropertiesDialog::onParallelDuError(QProcess* proc) {
     if (!m_diskParallelMode || !proc) return;
     m_diskParallelErrBufs[proc] += QString::fromUtf8(proc->readAllStandardError());
@@ -1111,8 +1103,8 @@ bool PropertiesDialog::parseDiskDuRecord(const QByteArray& rec) {
     m_diskChildren.insert(base); // sudo увидел то, что листинг не смог (закрытый корень)
     m_diskRestricted.remove(base); // размер этой папки привилегированная фаза уже снял
     // прогресс только по детям той же ФС (знаменатель m_diskTotalDirs) и
-    // ровно один раз: повторный замер в фазе sudo/волне и дети точки
-    // монтирования, которых du -x пропускает, счётчик больше не раздувают
+    // ровно один раз: повторный замер в фазе sudo и дети точки
+    // монтирования которых du пропускает счетчик больше не раздувают
     if (firstResolution && m_diskProgressChildren.contains(base)) ++m_diskDoneDirs;
     return true;
 }
@@ -1145,12 +1137,10 @@ void PropertiesDialog::collectDiskDuErrors() {
 }
 
 // первое ограничение доступа: авторизация ровно один раз на скан
-// живой тикет (прошлый Sudo Open/пароль/терминал) молча (`sudo -n`); иначе
-// ветка полкита: здесь системный диалог не открываем, pkexec покажет его сам
-// в момент измерения (все закрытые папки одним батчем = один диалог)
-// отказ диалога разбирает declineSudoAuthorization (повторно не спрашиваем),
-// недоступность полкита откатывает к полю пароля (fallbackToInlinePassword);
-// без полкита сразу строка инлайн «needed sudo» (sudo -k → sudo -S -v)
+// живой тикет молча через sudo иначе
+// ветка полкита где системный диалог открывается сам в момент измерения
+// отказ диалога разбирает declineSudoAuthorization
+// а без полкита сразу строка инлайн ввода пароля sudo
 void PropertiesDialog::noteDiskSudoNeeded() {
     if (m_diskSudoReady || m_diskSudoNeeded || m_diskSudoPhase || m_diskSudoDeclined) return;
     const bool ticketAlive = Core::XdgUtils::sudoTicketAlive();
@@ -1185,10 +1175,9 @@ void PropertiesDialog::noteDiskSudoNeeded() {
     updateDiskStatusRow();
 }
 
-// Enter в поле инлайн пароля: строгая проверка (sudo -k → sudo -S -v → контроль
-// тикета тот же путь, что у диалога попап Sudo Open). Успех прячем строку и
-// запускаем измерение закрытых папок (последними, если обычная фаза ещё течёт :
-// дождётся её конца); отказ красная строка ошибки, поле остаётся
+// ввод инлайн пароля: строгая проверка пароля и контроль тикета
+// успех прячет строку и запускает измерение закрытых папок
+// а отказ выводит красную строку ошибки
 void PropertiesDialog::onDiskPasswordEntered() {
     if (!m_diskPasswordEdit) return;
     const QString pass = m_diskPasswordEdit->text();
@@ -1200,7 +1189,7 @@ void PropertiesDialog::onDiskPasswordEntered() {
     if (ok) {
         m_diskSudoReady = true;
         m_diskSudoNeeded = false;
-        m_diskSudoPkexec = false; // пароль создал тикет дальше `sudo -n`
+        m_diskSudoPkexec = false; // пароль создал тикет и дальше работает sudo
         m_diskSudoErrorLabel->clear();
         updateDiskStatusRow();
         if (m_diskNormalDone && !m_diskScanning) startRestrictedMeasurement();
@@ -1266,9 +1255,8 @@ void PropertiesDialog::onDiskDuFinished(bool sudoPhase, int exitCode) {
     m_diskScanning = false;
     recomputeDiskUnknown();
 
-    // дети точки монтирования (другая ФС/сабволюм): потоковый du -x их пропустил,
-    // домеряем поштучно без root; закрытые из волны попадут в restricted и
-    // уйдут в очередь sudo, завершение волны вернёт нас сюда же (флаг)
+    // дети точки монтирования на другой файловой системе которых потоковый du пропустил
+    // домеряем поштучно без root а закрытые уйдут в очередь sudo
     if (!m_diskMountWaveDone && !m_diskSudoPhase) {
         QStringList pendingMounts;
         for (const QString& name : m_diskMountChildren) {
@@ -1303,10 +1291,10 @@ void PropertiesDialog::onDiskDuFinished(bool sudoPhase, int exitCode) {
     renderDiskUsage();
 }
 
-// вторая волна: только закрытые папки, последними. Для закрытого корня
-// (листинг невозможен) потоковый привилегированный `du -x -d1` по корню;
-// иначе один батч `du -s -b` по всем закрытым подпапкам (startSudoBatch):
-// живой тикет → `sudo -n`, иначе один диалог pkexec на весь батч
+// вторая волна: только закрытые папки и последними
+// для закрытого корня потоковый привилегированный du по корню
+// иначе один батч du по всем закрытым подпапкам
+// где живой тикет использует sudo иначе один диалог pkexec на весь батч
 void PropertiesDialog::startRestrictedMeasurement() {
     m_diskSudoNeeded = false;
     if (m_diskSudoErrorLabel) m_diskSudoErrorLabel->clear();
@@ -1331,10 +1319,9 @@ void PropertiesDialog::startRestrictedMeasurement() {
     startSudoBatch();
 }
 
-// привилегированная фаза не состоялась из-за недоступности полкита (нет
-// агента или провал запуска pkexec, это не отказ пользователя): показываем поле
-// инлайн пароля, ручной ввод (sudo -k → sudo -S -v) создаст тикет, после чего
-// добор перезапустится через `sudo -n` без полкита
+// привилегированная фаза не состоялась из за недоступности полкита
+// показываем поле инлайн пароля где ручной ввод создаст тикет после чего
+// добор перезапустится через sudo без полкита
 void PropertiesDialog::fallbackToInlinePassword(const QString& reason) {
     stopDiskUsageProc();
     Core::XdgUtils::sudoDebugLog(QStringLiteral("disk: pkexec unavailable (%1) -> inline password").arg(reason));
@@ -1356,8 +1343,8 @@ void PropertiesDialog::fallbackToInlinePassword(const QString& reason) {
 // авторизацию в системном диалоге полкита отклонили (126/127, «Request
 // dismissed»/«Not authorized») это окончательный ответ пользователя:
 // второй запрос пароля (строка инлайн) не показываем, недоступные папки
-// остаются «?». Вернуться к добору можно вручную: создать тикет в терминале
-// (sudo -v) и открыть свойства заново
+// остаются со знаком вопроса а вернуться к добору можно вручную через тикет
+// в терминале и открыть свойства заново
 void PropertiesDialog::declineSudoAuthorization(const QString& reason) {
     stopDiskUsageProc();
     Core::XdgUtils::sudoDebugLog(QStringLiteral("disk: polkit declined (%1)").arg(reason));

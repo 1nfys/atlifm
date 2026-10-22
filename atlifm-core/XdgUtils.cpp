@@ -80,6 +80,10 @@ QString XdgUtils::getMimeType(const std::filesystem::path& path) {
     return "application/octet-stream";
 }
 
+namespace {
+std::optional<DesktopApp> findDesktopAppById(const QString& desktopId);
+}
+
 std::vector<DesktopApp> XdgUtils::getAppsForFile(const std::filesystem::path& path) {
     std::vector<DesktopApp> apps;
     QString mime = getMimeType(path);
@@ -99,7 +103,7 @@ std::vector<DesktopApp> XdgUtils::getAppsForFile(const std::filesystem::path& pa
         if (!dir.exists()) continue;
 
         std::error_code dirEc;
-        // increment(ec), т.к. range-for использует бросающий overload
+        // increment ec потому что range for использует бросающий overload
         std::filesystem::directory_iterator it(
             std::filesystem::path(dirPath.toUtf8().toStdString()),
             std::filesystem::directory_options::skip_permission_denied, dirEc);
@@ -165,6 +169,28 @@ std::vector<DesktopApp> XdgUtils::getAppsForFile(const std::filesystem::path& pa
         }
     }
 
+    // GIO знает ассоциации из mimeapps.list, рекомендованные и добавленные вручную
+    // приложения, которых нет в MimeType=.desktop (например nvim/zed для .ts).
+    const QString gio = QStandardPaths::findExecutable("gio");
+    if (!gio.isEmpty()) {
+        QProcess proc;
+        proc.start(gio, {QStringLiteral("mime"), mime});
+        if (proc.waitForFinished(1500) && proc.exitCode() == 0) {
+            const QStringList lines = QString::fromUtf8(proc.readAllStandardOutput())
+                                          .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString& line : lines) {
+                const QStringList tokens = line.split(QRegularExpression(QStringLiteral("\\s+")),
+                                                       Qt::SkipEmptyParts);
+                for (const QString& token : tokens) {
+                    if (!token.endsWith(QLatin1String(".desktop"))) continue;
+                    if (auto app = findDesktopAppById(token)) {
+                        found[app->name.toUtf8().toStdString()] = std::move(*app);
+                    }
+                }
+            }
+        }
+    }
+
     apps.reserve(found.size());
     for (auto& [_, app] : found) {
         apps.push_back(std::move(app));
@@ -206,6 +232,8 @@ std::optional<DesktopApp> parseDesktopAppFile(const std::filesystem::path& fileP
     QTextStream in(&f);
     DesktopApp app;
     bool isApp = false;
+    bool noDisplay = false;
+    bool hidden = false;
     bool inDesktopEntry = false;
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
@@ -219,16 +247,18 @@ std::optional<DesktopApp> parseDesktopAppFile(const std::filesystem::path& fileP
         else if (line.startsWith("Exec=") && app.execCommand.isEmpty()) app.execCommand = line.mid(5);
         else if (line.startsWith("Icon=") && app.iconName.isEmpty()) app.iconName = line.mid(5);
         else if (line.startsWith("Type=Application")) isApp = true;
+        else if (line.startsWith("NoDisplay=true")) noDisplay = true;
+        else if (line.startsWith("Hidden=true")) hidden = true;
     }
 
-    if (!isApp || app.name.isEmpty() || app.execCommand.isEmpty()) return std::nullopt;
+    if (!isApp || noDisplay || hidden || app.name.isEmpty() || app.execCommand.isEmpty()) return std::nullopt;
     app.id = QString::fromUtf8(filePath.filename().c_str());
     return app;
 }
 
 std::optional<DesktopApp> findDesktopAppById(const QString& desktopId) {
     if (desktopId.isEmpty()) return std::nullopt;
-    // id приходит из внешних файлов (xdg-mime/mimeapps.list), не даём выйти
+    // id приходит из внешних файлов xdg mime и mimeapps list и мы проверяем путь
     // за каталоги приложений через '/' или '..'
     if (desktopId.contains('/') || desktopId.contains('\\') ||
         desktopId == "." || desktopId == "..") {
@@ -245,10 +275,29 @@ std::optional<DesktopApp> findDesktopAppById(const QString& desktopId) {
 
 }
 
+std::vector<DesktopApp> XdgUtils::getAllApps() {
+    std::vector<DesktopApp> apps;
+    QSet<QString> seen;
+    for (const QString& dirPath : desktopAppDirs()) {
+        const QStringList files = QDir(dirPath).entryList({QStringLiteral("*.desktop")}, QDir::Files);
+        for (const QString& fileName : files) {
+            // пользовательский каталог идёт первым и перекрывает системный файл с тем же id
+            if (seen.contains(fileName)) continue;
+            seen.insert(fileName);
+            const std::filesystem::path file((dirPath + QLatin1Char('/') + fileName).toStdString());
+            if (auto app = parseDesktopAppFile(file)) apps.push_back(std::move(*app));
+        }
+    }
+    std::sort(apps.begin(), apps.end(), [](const DesktopApp& a, const DesktopApp& b) {
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    return apps;
+}
+
 DesktopApp XdgUtils::getDefaultAppForFile(const std::filesystem::path& path) {
     const QString mime = getMimeType(path);
 
-    // 1) xdg-mime авторитетно (учитывает все базы mimeapps и профили)
+    // xdg mime авторитетно и учитывает все базы mimeapps и профили
     const QString xdgMime = QStandardPaths::findExecutable("xdg-mime");
     if (!xdgMime.isEmpty()) {
         QProcess proc;
@@ -364,7 +413,7 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
 
-    // 1. файл .desktop: запуск через gio launch или gtk-launch
+    // файл desktop: запуск через gio launch или gtk launch
     if (ext == ".desktop") {
         if (QProcess::startDetached("gio", {"launch", qpath})) return true;
         if (QProcess::startDetached("gtk-launch", {QString::fromUtf8(path.filename().c_str())})) return true;
@@ -385,7 +434,7 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
         return true;
     }
 
-    // 4. откат к xdg-open
+    // фолбэк к xdg open
     if (QProcess::startDetached("xdg-open", {qpath})) {
         return true;
     }
@@ -394,7 +443,7 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
     return QDesktopServices::openUrl(QUrl::fromLocalFile(qpath));
 }
 
-// выполнение через QProcess::splitCommand, без sh -c и без инъекции команд
+// выполнение через splitCommand без sh c и без инъекции команд
 bool XdgUtils::openWithApp(const DesktopApp& app, const std::filesystem::path& path) {
     QString cmd = app.execCommand;
     QString filePath = QString::fromUtf8(path.c_str());
@@ -546,7 +595,7 @@ bool copyStream(std::istream& in, std::ostream& out,
 
 }
 
-// одна строка диагностики авторизации sudo в ~/.cache/atlifm/sudo-debug.log;
+// строка диагностики авторизации sudo в лог файл
 // файл усечётся при росте > 64 КБ, пароли сюда не попадают
 void XdgUtils::sudoDebugLog(const QString& line) {
     const QString dir = QDir::homePath() + QStringLiteral("/.cache/atlifm");
@@ -630,9 +679,8 @@ bool XdgUtils::sudoApplyPassword(const QString& password, QString& outError) {
 
     QString pass = password; // копия, затираем после отправки
 
-    // 1) сброс кэша отдельным вызовом sudo -k без пароля: без него sudo -v
-    //    молча подтвердит живой тикет и не проверит пароль; флаг -k вместе
-    //    с -v не годится (man sudo: тикет не обновится), все sudo -n отвалятся
+    // сброс кэша вызовом sudo k без пароля иначе sudo v
+    // молча подтвердит живой тикет и не проверит пароль а сброс кэша гарантирует проверку
     {
         QProcess invalidate;
         invalidate.start("sudo", {"-k"});
@@ -648,8 +696,8 @@ bool XdgUtils::sudoApplyPassword(const QString& password, QString& outError) {
                          .arg(invalidate.exitCode()).arg(invErr));
     }
 
-    // 2) после -k кэша нет: sudo -S -v реально проверяет пароль, а успех
-    //    создаёт свежий тикет для всех sudo -n операций приложения
+    // после сброса кэша sudo S v реально проверяет пароль а успех
+    // создает свежий тикет для всех sudo операций приложения
     QProcess sudoProc;
     sudoProc.start("sudo", {"-S", "-v"});
     if (!sudoProc.waitForStarted(1500)) {
@@ -693,7 +741,7 @@ bool XdgUtils::sudoApplyPassword(const QString& password, QString& outError) {
     sudoDebugLog(QStringLiteral("apply: OK"));
 
     // тикет создан: все привилегированные вызовы (rootArgs) идут через
-    // sudo -n без повторных вопросов, пока он жив
+    // sudo без повторных вопросов пока тикет жив
     return true;
 }
 
@@ -858,18 +906,16 @@ QString sudoListingKey(const std::filesystem::path& dir) {
     return QString::fromUtf8(norm.c_str());
 }
 
-// полный путь для скрипта sh -c, исполняемого как root: резолвим только
-// из доверенных каталогов, PATH пользователя не должен управлять запуском
-// от root; экранируем для скрипта
+// полный путь для скрипта sh c исполняемого как root
+// резолвим только из доверенных системных каталогов и экранируем
 QString privilegedExe(const char* name) {
     const QString bare = QString::fromLatin1(name);
     const QString path = XdgUtils::resolveTrustedExe(bare);
     return shellQuote(path.isEmpty() ? bare : path);
 }
 
-// разовый привилегированный запуск: живой тикет → sudo -n, иначе pkexec
-// (ровно один системный диалог), без полкита инлайн пароль только из GUI
-// потока (TuiInputPopup из QThreadPool звать нельзя)
+// привилегированный запуск через живой тикет sudo или pkexec
+// без полкита инлайн пароль только из gui потока
 bool runPrivileged(const QStringList& argv, int timeoutMs,
                    QByteArray* out, QString* outErr, int* outExitCode,
                    QWidget* parentWidget) {
@@ -976,8 +1022,8 @@ void XdgUtils::provideSudoListingTree(const std::filesystem::path& root, const Q
 
     // рекурсивный листинг одним вызовом: find обходит maxdepth уровней,
     // после одной авторизации кэш работает на любую глубину; пути
-    // позиционный "$1", интерполяций в скрипт нет, ведущий «-» безопасен;
-    // head -c ограничивает большие деревья, обрыв посередине записи не страшен
+    // позиционный аргумент и ведущий минус безопасен
+    // ограничение размера через head c для больших деревьев
 XdgUtils::SudoListStatus XdgUtils::sudoListTree(const std::filesystem::path& dir, int maxDepth,
                                                 QString& outList, QString& outErr,
                                                 QWidget* parentWidget) {
@@ -1007,7 +1053,7 @@ XdgUtils::SudoListStatus XdgUtils::sudoListTree(const std::filesystem::path& dir
 
 // привилегированная мутация: мутация и свежий листинг find одним вызовом,
 // второй pkexec стал бы вторым системным диалогом (политика auth_admin без
-// keep); пути позиционные «$@» через sh -c
+// пути позиционные через sh c
 bool XdgUtils::sudoFileOp(PrivOp op, const std::vector<std::filesystem::path>& targets,
                           const std::filesystem::path& listingDir,
                           QString& outError, QWidget* parentWidget) {
@@ -1174,7 +1220,8 @@ bool XdgUtils::clearTrash() {
     return proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0;
 }
 
-bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths, QString& errorMsg) {
+bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths, QString& errorMsg,
+                                 std::shared_ptr<std::atomic<bool>> cancelToken) {
     const char* home = std::getenv("HOME");
     std::filesystem::path trashFiles;
     std::filesystem::path trashInfo;
@@ -1185,10 +1232,14 @@ bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths
 
     std::vector<std::filesystem::path> denied;
     for (const auto& p : paths) {
+        if (cancelToken && cancelToken->load()) {
+            errorMsg = "Cancelled";
+            return false;
+        }
         std::error_code ec;
         std::filesystem::remove_all(p, ec);
         if (ec) {
-            // отказавшие пути уходят одним привилегированным rm -rf вместе
+            // отказавшие пути уходят одним привилегированным rm rf вместе
             // со свежим листингом каталога (один системный диалог)
             if (ec == std::errc::permission_denied || ec == std::errc::operation_not_permitted) {
                 denied.push_back(p);
@@ -1219,9 +1270,15 @@ bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths
         }
     }
 
-        // отказавшие пути уходят одним привилегированным батчем rm со свежим
-        // листингом каталога (один системный диалог)
+    // отказавшие пути уходят одним привилегированным батчем rm со свежим
+    // листингом каталога (один системный диалог)
     if (!denied.empty()) {
+        // если отмена пришла после сбора denied путей то привилегированный rm не запускаем
+        // уже не запускаем и честно сообщаем, что операция не завершена
+        if (cancelToken && cancelToken->load()) {
+            errorMsg = "Cancelled";
+            return false;
+        }
         QString sudoErr;
         if (!sudoFileOp(PrivOp::Remove, denied, denied.front().parent_path(), sudoErr)) {
             errorMsg = QString("Failed to delete %1: %2")
@@ -1233,14 +1290,16 @@ bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths
     return true;
 }
 
-bool XdgUtils::moveItem(const std::filesystem::path& src, const std::filesystem::path& dest, QString& errorMsg) {
+bool XdgUtils::moveItem(const std::filesystem::path& src, const std::filesystem::path& dest, QString& errorMsg,
+                        std::function<void(uintmax_t bytesCopied, uintmax_t totalBytes)> progressCallback,
+                        std::shared_ptr<std::atomic<bool>> cancelToken) {
     std::error_code ec;
     std::filesystem::rename(src, dest, ec);
     if (ec) {
         // откат при переносе между устройствами (EXDEV): копируем, затем удаляем источник
         if (ec == std::make_error_code(std::errc::cross_device_link)) {
             QString copyErr;
-            if (copyItem(src, dest, copyErr)) {
+            if (copyItem(src, dest, copyErr, progressCallback, cancelToken)) {
                 std::error_code rmEc;
                 std::filesystem::remove_all(src, rmEc);
                 if (!rmEc) return true;
@@ -1293,7 +1352,7 @@ bool XdgUtils::copyItem(const std::filesystem::path& src, const std::filesystem:
         std::ifstream in(src, std::ios::binary);
         if (!in) {
             // sudo фолбэк, если источник нечитаем без root (только EACCES/
-            // EPERM): cp -a и свежий листинг одним вызовом (см. sudoFileOp)
+            // cp a и свежий листинг одним вызовом
             const int openErrno = errno;
             if (openErrno == EACCES || openErrno == EPERM) {
                 QString sudoErr;
@@ -1480,7 +1539,7 @@ bool XdgUtils::createSymlink(const std::filesystem::path& target, const std::fil
     return true;
 }
 
-// защита от инъекции аргументов через "--", вывод читается порциями чтобы избежать дедлока
+// защита от инъекции аргументов и вывод читается порциями чтобы избежать дедлока
 
 namespace {
 
@@ -1525,9 +1584,22 @@ bool isSingleStreamName(const QString& lower) {
     return hasSuffix(lower, {".gz", ".xz", ".bz2", ".zst", ".zstd", ".lz4", ".lzma"});
 }
 
-// общий запуск внешней операции с бесконечным ожиданием и разбором ошибки
-bool runAndWait(QProcess& proc, QString& errorMsg) {
-    proc.waitForFinished(-1);
+// общий запуск внешней операции с опросом процесса
+// чтобы можно было отменить долгий архив из тасков
+bool runAndWait(QProcess& proc, QString& errorMsg,
+                const std::shared_ptr<std::atomic_bool>& cancelToken) {
+    while (proc.state() != QProcess::NotRunning) {
+        if (cancelToken && cancelToken->load()) {
+            proc.terminate();
+            if (!proc.waitForFinished(300)) {
+                proc.kill();
+                proc.waitForFinished(300);
+            }
+            errorMsg = QStringLiteral("Cancelled");
+            return false;
+        }
+        proc.waitForFinished(100);
+    }
     if (proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0) {
         return true;
     }
@@ -1543,18 +1615,28 @@ struct ArchiveCmd {
 };
 
 // первый успешный кандидат; при всех отказах stderr последнего
-bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg) {
+bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg,
+                        const std::shared_ptr<std::atomic_bool>& cancelToken) {
     QStringList errors;
     for (const auto& cmd : cmds) {
+        if (cancelToken && cancelToken->load()) {
+            errorMsg = QStringLiteral("Cancelled");
+            return false;
+        }
         QProcess proc;
         proc.setProcessChannelMode(QProcess::SeparateChannels);
         if (!cmd.cwd.isEmpty()) proc.setWorkingDirectory(cmd.cwd);
         proc.start(cmd.program, cmd.args);
         if (!proc.waitForStarted(5000)) {
+            if (cancelToken && cancelToken->load()) {
+                errorMsg = QStringLiteral("Cancelled");
+                return false;
+            }
             errors << cmd.program + ": " + proc.errorString();
             continue;
         }
-        if (runAndWait(proc, errorMsg)) return true;
+        if (runAndWait(proc, errorMsg, cancelToken)) return true;
+        if (cancelToken && cancelToken->load()) return false;
         // GNU tar/7z сами начинают stderr с «<программа>:», не дублируем
         const QString detail = errorMsg.trimmed();
         const QString progName = QFileInfo(cmd.program).fileName();
@@ -1570,7 +1652,8 @@ bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg) 
 // одиночный поток (gz/xz/bz2/zst без внешнего архиватора): stdout
 // компрессора пишем прямо в файл назначения
 bool compressStreamToFile(const QString& prog, const QStringList& args,
-                          const QString& cwd, const QString& destStr, QString& errorMsg) {
+                          const QString& cwd, const QString& destStr, QString& errorMsg,
+                          const std::shared_ptr<std::atomic_bool>& cancelToken) {
     QProcess proc;
     proc.setWorkingDirectory(cwd);
     proc.setProcessChannelMode(QProcess::SeparateChannels);
@@ -1603,7 +1686,17 @@ bool compressStreamToFile(const QString& prog, const QStringList& args,
         stderrTail += proc.readAllStandardError();
         if (stderrTail.size() > 64 * 1024) stderrTail = stderrTail.right(64 * 1024);
         if (proc.state() == QProcess::NotRunning) break;
-        proc.waitForReadyRead(1000);
+        if (cancelToken && cancelToken->load()) {
+            proc.terminate();
+            if (!proc.waitForFinished(300)) {
+                proc.kill();
+                proc.waitForFinished(300);
+            }
+            out.close();
+            errorMsg = QStringLiteral("Cancelled");
+            return false;
+        }
+        proc.waitForReadyRead(100);
     }
     // остаток данных после завершения процесса
     {
@@ -1658,8 +1751,22 @@ std::filesystem::path XdgUtils::archiveExtractDirName(const std::filesystem::pat
 
 bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
                              const std::filesystem::path& destination,
-                             QString& errorMsg) {
+                             QString& errorMsg,
+                             std::shared_ptr<std::atomic_bool> cancelToken) {
     if (sources.empty()) return false;
+    if (cancelToken && cancelToken->load()) {
+        errorMsg = QStringLiteral("Cancelled");
+        return false;
+    }
+
+    std::error_code destEc;
+    const bool destExisted = std::filesystem::exists(destination, destEc);
+    auto cleanupPartial = [&]() {
+        if (cancelToken && cancelToken->load() && !destExisted) {
+            std::error_code ec;
+            std::filesystem::remove(destination, ec);
+        }
+    };
 
     const QString destStr = QString::fromUtf8(destination.c_str());
     const QString lower = destStr.toLower();
@@ -1679,7 +1786,7 @@ bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
     }
 
     // только имена файлов, cwd = их общий родитель: без пробельных проблем
-    // и с защитой от инъекции опций через "--"
+    // защита от инъекции опций
     QStringList names;
     QStringList safeNames;
     for (const auto& s : sources) {
@@ -1688,8 +1795,9 @@ bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
         safeNames << (n.startsWith('-') ? "./" + n : n);
     }
 
-    // одиночные потоки: 7z -tgzip/-txz/-tbzip2, затем gzip/xz/bzip2/zstd -c
-    if (isSingleStreamName(lower)) {
+    // одиночные потоки через 7z или gzip или xz
+    // tar gz и tar xz это tar контейнер а не поток одного файла
+    if (isSingleStreamName(lower) && !isTarArchiveName(lower)) {
         if (sources.size() != 1) {
             errorMsg = "Only one file can be compressed into " + destStr;
             return false;
@@ -1702,7 +1810,12 @@ bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
             if (fmtFlag) {
                 std::vector<ArchiveCmd> cmds{
                     {sevenZip, {"a", QString::fromLatin1(fmtFlag), "-bso0", "-bsp0", destStr, "--", single}, cwd}};
-                if (runFirstSuccessful(cmds, errorMsg)) return true;
+                if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+                if (cancelToken && cancelToken->load()) {
+                    cleanupPartial();
+                    errorMsg = QStringLiteral("Cancelled");
+                    return false;
+                }
             }
         }
         const char* tool = lower.endsWith(".gz") ? "gzip"
@@ -1715,7 +1828,12 @@ bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
                 const QStringList args = (QString::fromLatin1(tool) == "zstd")
                     ? QStringList{"-q", "-c", single}
                     : QStringList{"-c", "--", single};
-                if (compressStreamToFile(prog, args, cwd, destStr, errorMsg)) return true;
+                if (compressStreamToFile(prog, args, cwd, destStr, errorMsg, cancelToken)) return true;
+                if (cancelToken && cancelToken->load()) {
+                    cleanupPartial();
+                    errorMsg = QStringLiteral("Cancelled");
+                    return false;
+                }
             }
         }
         if (errorMsg.isEmpty()) errorMsg = "Unsupported archive format: " + destStr;
@@ -1758,13 +1876,23 @@ bool XdgUtils::createArchive(const std::vector<std::filesystem::path>& sources,
         errorMsg = "Unsupported archive format: " + destStr;
         return false;
     }
-    return runFirstSuccessful(cmds, errorMsg);
+    if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+    if (cancelToken && cancelToken->load()) {
+        cleanupPartial();
+        errorMsg = QStringLiteral("Cancelled");
+    }
+    return false;
 }
 
 bool XdgUtils::extractArchive(const std::filesystem::path& archivePath,
                               const std::filesystem::path& destination,
                               QString& errorMsg,
-                              std::filesystem::path* outActualDestination) {
+                              std::filesystem::path* outActualDestination,
+                              std::shared_ptr<std::atomic_bool> cancelToken) {
+    if (cancelToken && cancelToken->load()) {
+        errorMsg = QStringLiteral("Cancelled");
+        return false;
+    }
     const QString arcStr = QString::fromUtf8(archivePath.c_str());
     const QString lower = arcStr.toLower();
     if (!isTarArchiveName(lower) && !isSevenZipArchiveName(lower) && !isSingleStreamName(lower)) {
@@ -1772,7 +1900,7 @@ bool XdgUtils::extractArchive(const std::filesystem::path& archivePath,
         return false;
     }
 
-    // занятое файлом имя ломает распаковку (tar получит файл как -C),
+    // если имя занято файлом то берем свободное имя
     // поэтому берём свободное «имя (2)»; существующий каталог валиден
     std::filesystem::path dest = destination;
     std::error_code ec;
@@ -1797,10 +1925,24 @@ bool XdgUtils::extractArchive(const std::filesystem::path& archivePath,
     }
 
     ec.clear();
+    const bool destExisted = std::filesystem::exists(dest, ec);
+    ec.clear();
     std::filesystem::create_directories(dest, ec);
     if (ec) {
         errorMsg = "Cannot create folder " + QString::fromUtf8(dest.c_str()) + ": " +
                    QString::fromUtf8(ec.message().c_str());
+        return false;
+    }
+    auto cleanupPartial = [&]() {
+        if (cancelToken && cancelToken->load() && !destExisted) {
+            std::error_code rmEc;
+            std::filesystem::remove_all(dest, rmEc);
+            if (outActualDestination && !rmEc) outActualDestination->clear();
+        }
+    };
+    if (cancelToken && cancelToken->load()) {
+        cleanupPartial();
+        errorMsg = QStringLiteral("Cancelled");
         return false;
     }
     if (outActualDestination) *outActualDestination = dest;
@@ -1828,13 +1970,23 @@ bool XdgUtils::extractArchive(const std::filesystem::path& archivePath,
         errorMsg = "No extractor available (install 7z or tar).";
         return false;
     }
-    return runFirstSuccessful(cmds, errorMsg);
+    if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+    if (cancelToken && cancelToken->load()) {
+        cleanupPartial();
+        errorMsg = QStringLiteral("Cancelled");
+    }
+    return false;
 }
 
 bool XdgUtils::extractArchiveEntries(const std::filesystem::path& archivePath,
                                      const QStringList& entryPaths,
                                      const std::filesystem::path& destinationFolder,
-                                     QString& errorMsg) {
+                                     QString& errorMsg,
+                                     std::shared_ptr<std::atomic_bool> cancelToken) {
+    if (cancelToken && cancelToken->load()) {
+        errorMsg = QStringLiteral("Cancelled");
+        return false;
+    }
     const QString arcStr = QString::fromUtf8(archivePath.c_str());
     const QString lower = arcStr.toLower();
     if (!isTarArchiveName(lower) && !isSevenZipArchiveName(lower) && !isSingleStreamName(lower)) {
@@ -1844,19 +1996,32 @@ bool XdgUtils::extractArchiveEntries(const std::filesystem::path& archivePath,
 
     // одиночный поток: выборочной распаковки нет, разворачиваем целиком
     if (isSingleStreamName(lower) && !isTarArchiveName(lower)) {
-        return extractArchive(archivePath, destinationFolder, errorMsg);
+        return extractArchive(archivePath, destinationFolder, errorMsg, nullptr, cancelToken);
     }
 
     std::error_code ec;
+    const bool destExisted = std::filesystem::exists(destinationFolder, ec);
+    ec.clear();
     std::filesystem::create_directories(destinationFolder, ec);
     if (ec) {
         errorMsg = "Cannot create folder " + QString::fromUtf8(destinationFolder.c_str()) + ": " +
                    QString::fromUtf8(ec.message().c_str());
         return false;
     }
+    auto cleanupPartial = [&]() {
+        if (cancelToken && cancelToken->load() && !destExisted) {
+            std::error_code rmEc;
+            std::filesystem::remove_all(destinationFolder, rmEc);
+        }
+    };
+    if (cancelToken && cancelToken->load()) {
+        cleanupPartial();
+        errorMsg = QStringLiteral("Cancelled");
+        return false;
+    }
 
     // имена подставляем как в листинге (tar хранит «./sub/…», 7z/zip без
-    // префикса); завершающий «/» у каталогов срезаем, «-» защищаем «./»
+    // завершающий слеш срезаем а ведущий минус защищаем точкой со слешем
     QStringList names;
     for (const QString& raw : entryPaths) {
         QString n = raw;
@@ -1902,7 +2067,12 @@ bool XdgUtils::extractArchiveEntries(const std::filesystem::path& archivePath,
         errorMsg = "No extractor available (install 7z or tar).";
         return false;
     }
-    return runFirstSuccessful(cmds, errorMsg);
+    if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+    if (cancelToken && cancelToken->load()) {
+        cleanupPartial();
+        errorMsg = QStringLiteral("Cancelled");
+    }
+    return false;
 }
 
 bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
@@ -1953,8 +2123,8 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
         outError = proc.errorString();
         return false;
     }
-    // stdout читаем порциями с жёстким лимитом: waitForFinished(-1) копил бы
-    // весь листинг в памяти (zip-bomb с миллионами записей съедал RAM)
+    // stdout читаем порциями с жестким лимитом
+    // иначе весь листинг в памяти съедал бы всю оперативку
     QByteArray raw;
     bool outputOverflow = false;
     while (true) {
@@ -1985,7 +2155,7 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
     const QString text = QString::fromUtf8(raw);
 
     if (prog == bsdtar) {
-        // drwxr-xr-x  0 infys  infys       0 Oct 17 00:40 ./
+        // разбор стандартной строки листинга bsdtar
         static const QRegularExpression re(
             QStringLiteral(R"(^(\S+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$)"));
         const QStringList lines = text.split('\n');
@@ -1998,7 +2168,7 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
             e.isDir = m.captured(1).startsWith('d');
             e.size = m.captured(2).toULongLong();
             e.modified = QString("%1 %2 %3").arg(m.captured(3), m.captured(4), m.captured(5));
-            // у симлинков bsdtar печатает «path -> target», цель в имя не
+            // у симлинков bsdtar печатает стрелку и цель в имя не входит
             // входит, иначе выборочная распаковка никогда не матчится
             QString entryPath = m.captured(6);
             const int arrow = entryPath.indexOf(QStringLiteral(" -> "));
@@ -2010,7 +2180,7 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
         return true;
     }
 
-    // 7z l -slt -ba: станцы «Key = Value», разделённые пустой строкой
+    // листинг 7z разбирает блоки ключ значение разделенные пустой строкой
     ArchiveEntry cur;
     bool have = false;
     auto flush = [&]() {

@@ -357,6 +357,18 @@ struct UiConfig {
     int windowWidth{1200};
     int windowHeight{750};
     int sidebarWidth{180};
+    // layout: какие панели показывать и сколько места отдавать колонкам
+    bool showTabBar{true};
+    bool showBookmarks{true};
+    bool showStatusBar{true};
+    bool showParentColumn{true};
+    bool showPreview{true};
+    int parentColumnWidth{300};
+    int previewColumnWidth{420};
+    // поиск: искать ли в скрытых/игнорируемых файлах и сколько держать результатов
+    bool searchHidden{true};
+    bool searchIgnored{false};
+    int searchMaxResults{1500};
     QString fontFamily;
     int fontSize{13};
     int fontPointSize{10};
@@ -408,10 +420,63 @@ inline void applyAppThemeConf(PaletteDefinition& p) {
             if (ok && h >= 300 && h <= 4320) uiConfig().windowHeight = h;
             continue;
         }
-        if (key == "sidebar_width") {
+        if (key == "sidebar_width" || key == "bookmarks_width") {
             bool ok = false;
             int sw = val.toInt(&ok);
             if (ok && sw >= 80 && sw <= 800) uiConfig().sidebarWidth = sw;
+            continue;
+        }
+        if (key == "parent_width" || key == "parent_column_width") {
+            bool ok = false;
+            int pw = val.toInt(&ok);
+            if (ok && pw >= 80 && pw <= 800) uiConfig().parentColumnWidth = pw;
+            continue;
+        }
+        if (key == "preview_width" || key == "preview_column_width") {
+            bool ok = false;
+            int pw = val.toInt(&ok);
+            if (ok && pw >= 80 && pw <= 1000) uiConfig().previewColumnWidth = pw;
+            continue;
+        }
+        if (key == "show_tabs" || key == "show_tabbar") {
+            const QString v = val.toLower();
+            uiConfig().showTabBar = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "show_bookmarks" || key == "show_sidebar") {
+            const QString v = val.toLower();
+            uiConfig().showBookmarks = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "show_status_bar" || key == "show_statusbar") {
+            const QString v = val.toLower();
+            uiConfig().showStatusBar = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "show_parent_column" || key == "show_parent") {
+            const QString v = val.toLower();
+            uiConfig().showParentColumn = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "show_preview" || key == "show_preview_pane") {
+            const QString v = val.toLower();
+            uiConfig().showPreview = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "search_hidden") {
+            const QString v = val.toLower();
+            uiConfig().searchHidden = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "search_ignored" || key == "search_no_ignore") {
+            const QString v = val.toLower();
+            uiConfig().searchIgnored = (v != "false" && v != "0" && v != "off" && v != "no");
+            continue;
+        }
+        if (key == "search_max_results") {
+            bool ok = false;
+            int count = val.toInt(&ok);
+            if (ok && count >= 100 && count <= 20000) uiConfig().searchMaxResults = count;
             continue;
         }
         if (key == "font_family") {
@@ -555,8 +620,8 @@ inline QFont getMonospaceFont(int pointSize = 10, QFont::Weight weight = QFont::
         font.setFamily("monospace");
     }
 
-    // прямые тексты qpainter (делегат, таббар, закладки) не ловят qss
-    // font-size, масштабируем их пропорционально font_size (10 это дефолт, font_size=13)
+    // прямые тексты qpainter (делегат, таббар, закладки) не ловят qss размер шрифта
+    // масштабируем их пропорционально font size (10 это дефолт или font size=13)
     int effectiveSize = pointSize;
     if (uiConfig().fontPointSize != 10) {
         effectiveSize = std::max(4, (pointSize * uiConfig().fontPointSize + 5) / 10);

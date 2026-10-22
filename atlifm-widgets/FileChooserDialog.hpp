@@ -8,7 +8,7 @@
 #include <vector>
 
 class QHBoxLayout;
-class QScrollArea;
+class QLabel;
 class QSplitter;
 
 namespace Widgets {
@@ -18,7 +18,8 @@ class MillerViewContainer;
 class TuiStatusBar;
 
 // «Open Files» диалог выбора файла в полном дизайне основного окна: панель закладок + 3 колонки Miller,
-// сверху строка путей breadcrumb вместо вкладок. Живёт оверлеем в MainWindow и отдельным окном в PortalService
+// сверху в режиме Save строка имени, снизу адресная строка как в основном окне.
+// Живёт оверлеем в MainWindow и отдельным окном в PortalService
 class FileChooserDialog : public QWidget {
     Q_OBJECT
 
@@ -54,19 +55,19 @@ protected:
 private:
     void setupUi();
     void onDirectoryChanged(const std::filesystem::path& dir);
-    void rebuildBreadcrumb();
     // двойной клик/Enter по файлу в колонках: Save подставляет имя, Open(multiple) filesChosen, одиночный Open fileChosen
     void onFileActivated(const std::filesystem::path& path);
     void acceptCurrent();
 
-    QScrollArea* m_crumbScroll{nullptr};
-    QWidget* m_crumbHost{nullptr};
-    QHBoxLayout* m_crumbLayout{nullptr};
     QSplitter* m_bodySplitter{nullptr};
     BookmarksBar* m_bookmarksBar{nullptr};
     MillerViewContainer* m_miller{nullptr};
     // нижняя адресная строка как в основном окне, тот же TuiStatusBar: путь, фильтр, счётчики, диск, бейдж sudo
     TuiStatusBar* m_statusBar{nullptr};
+    // верхняя строка имени только в режиме сохранения; путь остаётся внизу в статусбаре
+    QWidget* m_nameBar{nullptr};
+    QWidget* m_actionBar{nullptr};
+    QLabel* m_nameLabel{nullptr};
     QLineEdit* m_nameEdit{nullptr};
     QPushButton* m_cancelBtn{nullptr};
     QPushButton* m_openBtn{nullptr};

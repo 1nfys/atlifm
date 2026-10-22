@@ -34,12 +34,11 @@ struct UndoAction {
     QString description;
 };
 
-// бэкапим цель для чистого undo при перезаписи
+// сохраняем файл перед перезаписью
 inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
     std::error_code ec;
 
-    // exists() в недоступном каталоге врёт (stat даёт EACCES), верим только
-    // если родитель реально доступен на чтение и обход
+    // если папка закрыта то stat врет и проверяем доступность
     const auto parentDir = target.parent_path().empty() ? std::filesystem::path("/")
                                                         : target.parent_path();
     if (!std::filesystem::exists(target, ec) && ::access(parentDir.c_str(), R_OK | X_OK) == 0) {
@@ -56,8 +55,7 @@ inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
         backupDir = std::filesystem::path(home) / ".cache/atlifm/undo_backups" / uniqueFolder;
         std::filesystem::create_directories(backupDir, ec);
     } else {
-        // без HOME mkdtemp атомарно: предсказуемый путь позволяет заранее
-        // подкинуть симлинк и увести стэш
+        // безопасная временная папка чтобы не подменили симлинком
         std::string tmpl = (std::filesystem::temp_directory_path() / "atlifm_undo_XXXXXX").string();
         if (!::mkdtemp(tmpl.data())) return {};
         std::filesystem::permissions(tmpl,
@@ -68,12 +66,11 @@ inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
 
     std::filesystem::path backupPath = backupDir / target.filename();
 
-    // пробуем rename до фолбэков
+    // пробуем быстрый перенос
     std::filesystem::rename(target, backupPath, ec);
     if (ec) {
         if (ec == std::errc::permission_denied || ec == std::errc::operation_not_permitted) {
-            // цель под root: перенос через sudo mv; недобитый бэкап подчищаем,
-            // чтобы mv не вложил цель внутрь него
+            // если файл под рутом то двигаем через sudo и чистим временную папку
             std::error_code cleanEc;
             std::filesystem::remove_all(backupPath, cleanEc);
             QString sudoErr;
@@ -81,15 +78,14 @@ inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
                 return {};
             }
         } else {
-            // фолбэк EXDEV: копируем и удаляем, копию проверяем до удаления
-            // источника, иначе при сбое копирования данные терялись
+            // при переносе между файловыми системами сначала копируем и только потом удаляем
             QString err;
             if (!XdgUtils::copyItem(target, backupPath, err)) {
                 return {};
             }
             std::error_code rmEc;
             std::filesystem::remove_all(target, rmEc);
-            // снос через рут, если права помешали
+            // удаление через sudo если не хватило прав
             if (rmEc == std::errc::permission_denied || rmEc == std::errc::operation_not_permitted) {
                 QString sudoErr;
                 XdgUtils::sudoFileOp(XdgUtils::PrivOp::Remove, {target}, parentDir, sudoErr);
@@ -97,12 +93,12 @@ inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
         }
     }
     if (!std::filesystem::exists(backupPath, ec)) {
-        return {}; // стэш не удался
+        return {};
     }
     return backupPath;
 }
 
-// возвращаем стэш обратно на место цели
+// возвращаем сохраненный файл на место
 inline bool restoreFromUndo(const std::filesystem::path& backupPath, const std::filesystem::path& target) {
     std::error_code ec;
     if (backupPath.empty() || !std::filesystem::exists(backupPath, ec)) {
@@ -111,7 +107,7 @@ inline bool restoreFromUndo(const std::filesystem::path& backupPath, const std::
     if (std::filesystem::exists(target, ec)) {
         std::error_code rmEc;
         std::filesystem::remove_all(target, rmEc);
-        // цель под root: снос через рут
+        // удаление через sudo если цель под рутом
         if (rmEc == std::errc::permission_denied || rmEc == std::errc::operation_not_permitted) {
             QString sudoErr;
             XdgUtils::sudoFileOp(XdgUtils::PrivOp::Remove, {target},
@@ -262,8 +258,7 @@ public:
 
         if (last.type == UndoOpType::Move) {
             for (const auto& item : last.items) {
-                // без гейта по exists(): stat в закрытых каталогах root врёт,
-                // moveItem сам делает rename, копию при EXDEV и sudo фолбэк
+                // перенос файла без лишней проверки существования
                 QString err;
                 if (XdgUtils::moveItem(item.dest, item.src, err)) {
                     successCount++;
@@ -276,7 +271,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Undo failed";
-                // запись не теряем, неудачный undo можно повторить
+                // сохраняем действие для повторной попытки
                 m_history.push_back(std::move(last));
                 return false;
             }
@@ -291,7 +286,7 @@ public:
         }
         else if (last.type == UndoOpType::Copy) {
             for (const auto& item : last.items) {
-                // без гейта по exists(); remove_all на отсутствующей цели успех
+                // удаление скопированного файла
                 std::error_code rmEc;
                 std::filesystem::remove_all(item.dest, rmEc);
                 bool gone = !rmEc;
@@ -312,7 +307,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Undo failed";
-                // запись не теряем, неудачный undo можно повторить
+                // сохраняем действие для повторной попытки
                 m_history.push_back(std::move(last));
                 return false;
             }
@@ -322,7 +317,7 @@ public:
             redoAct.description = last.description;
             m_redoStack.push_back(std::move(redoAct));
 
-            // фокусим прошлый скопированный файл
+            // выбираем прошлый скопированный файл
             if (outSelectPath) {
                 for (auto it = m_history.rbegin(); it != m_history.rend(); ++it) {
                     if (it->type == UndoOpType::Copy && !it->items.empty()) {
@@ -340,8 +335,7 @@ public:
         }
         else if (last.type == UndoOpType::Create) {
             for (auto item : last.items) {
-                // без гейта по exists(), stashForUndo сам различает отсутствие
-                // цели и закрытый каталог
+                // сохраняем файл перед удалением
                 item.backupPath = stashForUndo(item.dest);
                 if (!item.backupPath.empty()) {
                     redoItems.push_back(item);
@@ -350,7 +344,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Undo failed";
-                // запись не теряем, неудачный undo можно повторить
+                // сохраняем действие для повторной попытки
                 m_history.push_back(std::move(last));
                 return false;
             }
@@ -369,7 +363,7 @@ public:
                 if (std::filesystem::exists(item.dest, ec)) {
                     QString err;
                     if (!XdgUtils::moveItem(item.dest, item.src, err)) {
-                        continue; // неудача не считается откатом
+                        continue;
                     }
                     const char* home = std::getenv("HOME");
                     if (home) {
@@ -382,7 +376,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Undo failed";
-                // запись не теряем, неудачный undo можно повторить
+                // сохраняем действие для повторной попытки
                 m_history.push_back(std::move(last));
                 return false;
             }
@@ -417,8 +411,7 @@ public:
 
         if (last.type == UndoOpType::Move) {
             for (auto item : last.items) {
-                // без гейтов по exists(): в закрытых каталогах root stat врёт;
-                // stashForUndo безопасен и для отсутствующего dest
+                // сохраняем файл перед перезаписью
                 item.backupPath = stashForUndo(item.dest);
                 QString err;
                 if (!XdgUtils::moveItem(item.src, item.dest, err)) {
@@ -429,7 +422,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Redo failed";
-                // запись не теряем, неудачный redo можно повторить
+                // сохраняем действие для повторной попытки
                 m_redoStack.push_back(std::move(last));
                 return false;
             }
@@ -453,7 +446,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Redo failed";
-                // запись не теряем, неудачный redo можно повторить
+                // сохраняем действие для повторной попытки
                 m_redoStack.push_back(std::move(last));
                 return false;
             }
@@ -475,7 +468,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Redo failed";
-                // запись не теряем, неудачный redo можно повторить
+                // сохраняем действие для повторной попытки
                 m_redoStack.push_back(std::move(last));
                 return false;
             }
@@ -499,7 +492,7 @@ public:
             }
             if (successCount == 0 && !last.items.empty()) {
                 outMessage = "Redo failed";
-                // запись не теряем, неудачный redo можно повторить
+                // сохраняем действие для повторной попытки
                 m_redoStack.push_back(std::move(last));
                 return false;
             }

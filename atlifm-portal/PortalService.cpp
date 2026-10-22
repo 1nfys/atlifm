@@ -91,7 +91,7 @@ QWindow* foreignParentFrom(const QString& parentWindow) {
     return QWindow::fromWinId(static_cast<WId>(id));
 }
 
-// backend вправе вызывать только фронтенд xdg-desktop-portal: иначе любой
+// бэкенд вправе вызывать только фронтенд портала иначе любой
 // процесс получил бы диалог и вернул приложению произвольные пути;
 // service() вызова даёт уникальное имя отправителя, сверяем с владельцем имени фронтенда
 bool senderIsPortalFrontend(const QDBusMessage& call) {

@@ -16,10 +16,10 @@ public:
 
 signals:
     void openRequested();
+    void openInNewTabRequested();
     void openWithAppRequested(const QString& execCmd);
     // «Open With...» открывает полноразмерный диалог выбора приложения в центре окна, а не подменю
     void openWithRequested();
-    void sudoOpenRequested();
     void clearTrashRequested();
     void cutRequested();
     void copyRequested();

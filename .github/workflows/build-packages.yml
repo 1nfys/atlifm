@@ -41,8 +41,8 @@ jobs:
           mkdir -p build out
           src=$(sh packaging/scripts/make-src-tarball.sh . build)
           tar xf "$src" -C build
-          cp -r packaging/debian build/atlifm-1.0.0/debian
-          cd build/atlifm-1.0.0
+          cp -r packaging/debian build/atlifm-1.0.1/debian
+          cd build/atlifm-1.0.1
           dpkg-buildpackage -B -us -uc
 
       - name: Build source package
@@ -50,10 +50,10 @@ jobs:
         run: |
           mkdir -p build/src
           src=$(sh packaging/scripts/make-src-tarball.sh . build/src)
-          cp "$src" build/src/atlifm_1.0.0.orig.tar.gz
-          tar xf build/src/atlifm_1.0.0.orig.tar.gz -C build/src
-          cp -r packaging/debian build/src/atlifm-1.0.0/debian
-          cd build/src/atlifm-1.0.0
+          cp "$src" build/src/atlifm_1.0.1.orig.tar.gz
+          tar xf build/src/atlifm_1.0.1.orig.tar.gz -C build/src
+          cp -r packaging/debian build/src/atlifm-1.0.1/debian
+          cd build/src/atlifm-1.0.1
           dpkg-buildpackage -S -us -uc
 
       - name: Lintian

@@ -1,6 +1,6 @@
 # Мейнтейнер: 1nfys <lifawafla@gmail.com>
 pkgname=atlifm
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=0
 pkgdesc="Terminal-style file manager with a GUI mouse-first workflow"
 url="https://github.com/1nfys/atlifm"
@@ -15,9 +15,9 @@ source="atlifm-$pkgver-fixed.tar.gz
 
 # контрольная сумма тарбола: обновляется через 'abuild checksum' после
 # генерации архива скриптом scripts/make-src-tarball.sh
-sha512sums="2ca20a7fdc67ea56f8be7a477bf19ec78a314b99cbbcf7155b68cf500a11d6588821e7efb18d4ede48a567744e91c6e4441195d775776a8fa33b97a3cb2d4657  atlifm-1.0.0-fixed.tar.gz
-746c3b1df84042da4b4feed06ac95cfbc8dd0d2869da04fc8dd04b8ced121aa9f4ac8962619137ae043a51fef9e60541679e120bd5f4bba7e2e144e4929bc0a7  atlifm.metainfo.xml
-88ac91c4994e769ae69deeffac959e926d08edee464957f2380c678ff050f61629e7514334d1ecd2c800008a88433848bf03acae33b8e0fdf004fbc8a97a8268  atlifm.1"
+sha512sums="eba860adc2c7ad54d645a9feeca2e453a36a1df015da92eb1936a714a75cb1d11393a315c013fcc4c86fae716ecfacf193d981f20b9e7bc08136e85de3d48990  atlifm-1.0.1-fixed.tar.gz
+946c17023fd10dc7aa9e56d89823a8d3ff8c33eecb212453f6dfbe048766e10220313e955d66e536b39101a26771bc6787c817be2e1bbed5a11805e6a327d79a  atlifm.metainfo.xml
+edb93c795d1ccfcc836963083a019b0c46b62b506c0325af7f64bd1c186ecfb37f7a04002115dca2a77f1aff278dbdf728877070ca0564a99781df0c178893a4  atlifm.1"
 
 build() {
 	cmake -S "$srcdir"/$pkgname-$pkgver -B "$srcdir"/build -G Ninja \

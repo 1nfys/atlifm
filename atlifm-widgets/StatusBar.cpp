@@ -1,4 +1,5 @@
 #include "StatusBar.hpp"
+#include "../atlifm-core/Network.hpp"
 #include "../atlifm-theme/Theme.hpp"
 #include "../atlifm-core/XdgUtils.hpp"
 #include <QHBoxLayout>
@@ -13,13 +14,14 @@
 #include <QTimer>
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QSignalBlocker>
+#include <QSizePolicy>
 #include <cstdlib>
 
 namespace Widgets {
 
 static QString pathToQString(const std::filesystem::path& p) {
-    // явный UTF-8: нативные байты в Linux это UTF-8, fromStdString может зависеть
-    // от локали, поэтому декодируем как UTF-8, чтобы поддержать пути с кириллицей и CJK
+    // явный utf8: нативные байты в linux это utf8 поэтому декодируем так для кириллицы
     return QString::fromUtf8(p.c_str());
 }
 
@@ -88,6 +90,13 @@ void TuiStatusBar::setupUi() {
     connect(m_pathInput, &QLineEdit::returnPressed, this, &TuiStatusBar::onPathInputReturnPressed);
     m_layout->addWidget(m_pathInput, 1, Qt::AlignVCenter);
 
+    m_filterCommandLabel = new QLabel(this);
+    m_filterCommandLabel->setFont(Theme::getMonospaceFont(9, QFont::Bold));
+    m_filterCommandLabel->setTextFormat(Qt::PlainText);
+    m_filterCommandLabel->hide();
+    m_filterCommandLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    m_layout->addWidget(m_filterCommandLabel, 0, Qt::AlignVCenter);
+
     m_filterInput = new QLineEdit(this);
     m_filterInput->setFont(Theme::getMonospaceFont(9));
     m_filterInput->setPlaceholderText("Search...");
@@ -96,13 +105,8 @@ void TuiStatusBar::setupUi() {
     m_filterInput->hide();
     m_filterInput->installEventFilter(this);
 
-    connect(m_filterInput, &QLineEdit::textChanged, this, [this](const QString& text) {
-        emit filterChanged(text);
-    });
-    // enter завершает фильтрацию: редактор скрывается, фильтр снимается
-    connect(m_filterInput, &QLineEdit::returnPressed, this, [this]() {
-        deactivateFilter();
-    });
+    connect(m_filterInput, &QLineEdit::textChanged, this, &TuiStatusBar::handleFilterTextChanged);
+    connect(m_filterInput, &QLineEdit::returnPressed, this, &TuiStatusBar::filterSubmitted);
     m_layout->addWidget(m_filterInput, 0, Qt::AlignVCenter);
 
     // бейдж сообщений, слева от индикатора sudo
@@ -145,6 +149,12 @@ void TuiStatusBar::setupUi() {
     m_promptCancelBtn->hide();
     m_layout->addWidget(m_promptCancelBtn, 0, Qt::AlignVCenter);
     connect(m_promptCancelBtn, &QPushButton::clicked, this, [this]() { finishInlinePrompt(0); });
+
+    // агрегированный прогресс фоновых задач слева от бейджа sudo
+    m_taskSummaryLabel = new QLabel(this);
+    m_taskSummaryLabel->setFont(Theme::getMonospaceFont(9, QFont::Bold));
+    m_taskSummaryLabel->hide();
+    m_layout->addWidget(m_taskSummaryLabel, 0, Qt::AlignVCenter | Qt::AlignRight);
 
     // красный бейдж sudo между бейджами сообщений и счётчиком файлов
     m_sudoBadgeLabel = new QLabel("sudo", this);
@@ -216,6 +226,10 @@ void TuiStatusBar::updateTheme() {
     )")
     .arg(Text().name(), Accent().name(), AccentFg().name()));
 
+    m_filterCommandLabel->setStyleSheet(QString(
+        "QLabel { background-color: %1; color: %2; padding: 1px 7px; margin-right: 2px; }")
+        .arg(Accent().name(), AccentFg().name()));
+
     if (m_pathCompleter) {
         if (auto* popup = m_pathCompleter->popup()) {
             popup->setFont(Theme::getMonospaceFont(9));
@@ -250,6 +264,12 @@ void TuiStatusBar::updateTheme() {
     m_sudoBadgeLabel->setStyleSheet(QString(
         "QLabel { background-color: %1; color: %2; font-weight: bold; padding: 1px 8px; border-radius: 0px; }"
     ).arg(Red().name(), Base().name()));
+
+    if (m_taskSummaryLabel) {
+        m_taskSummaryLabel->setStyleSheet(QString(
+            "QLabel { background-color: %1; color: %2; font-weight: bold; padding: 1px 8px; border-radius: 0px; }"
+        ).arg(Surface1().name(), Accent().name()));
+    }
 
     m_statsLabel->setStyleSheet(QString(
         "QLabel { background-color: %1; color: %2; font-weight: bold; padding: 1px 8px; border-radius: 0px; }"
@@ -372,6 +392,7 @@ void TuiStatusBar::resizeEvent(QResizeEvent* event) {
     m_pathSuffixLabel->setFont(Theme::getMonospaceFont(ptSize, QFont::Bold));
     m_statsLabel->setFont(Theme::getMonospaceFont(ptSize, QFont::Bold));
     m_sudoBadgeLabel->setFont(Theme::getMonospaceFont(ptSize, QFont::Bold));
+    if (m_taskSummaryLabel) m_taskSummaryLabel->setFont(Theme::getMonospaceFont(ptSize, QFont::Bold));
     m_statusMessageLabel->setFont(Theme::getMonospaceFont(ptSize, QFont::Bold));
     if (m_permsLabel) m_permsLabel->setFont(Theme::getMonospaceFont(ptSize));
     if (m_filterInput) m_filterInput->setFont(f);
@@ -434,7 +455,7 @@ void TuiStatusBar::onPathInputReturnPressed() {
         return;
     }
 
-    // UTF-8: поддержка путей с кириллицей и CJK; раскрываем ведущий ~ в $HOME
+    // utf8 пути и раскрываем тильду в домашний каталог
     std::string pathBytes = text.toUtf8().toStdString();
     const char* home = std::getenv("HOME");
     if (home && !pathBytes.empty() && pathBytes[0] == '~') {
@@ -447,8 +468,12 @@ void TuiStatusBar::onPathInputReturnPressed() {
     std::error_code ec;
     if (std::filesystem::exists(p, ec)) {
         emit pathEntered(p);
+    } else if (Core::Network::looksLikeNetwork(text)) {
+        emit networkLocationEntered(text);
+        m_pathInput->setText(formatPathString(m_currentPath));
     } else {
         m_pathInput->setText(formatPathString(m_currentPath));
+        setProgressMessage(QStringLiteral("Path not found: %1").arg(text));
     }
     m_pathInput->clearFocus();
 }
@@ -568,6 +593,12 @@ void TuiStatusBar::setProgressMessage(const QString& msg, bool isFinished) {
     }
 }
 
+void TuiStatusBar::setTaskSummary(const QString& summary) {
+    if (!m_taskSummaryLabel) return;
+    m_taskSummaryLabel->setText(summary);
+    m_taskSummaryLabel->setVisible(!summary.isEmpty());
+}
+
 // автоскрытие бейджа сообщения через 1.5 с, после инлайн промпта таймер
 // перезапускается (beginInlinePrompt останавливает его), иначе бейдж висит вечно
 void TuiStatusBar::scheduleMessageDismiss() {
@@ -596,9 +627,78 @@ void TuiStatusBar::setFilterBuffer(const QString& filterText, bool isEditing) {
     }
 }
 
+void TuiStatusBar::setFilterCommands(const QStringList& commands) {
+    m_filterCommands.clear();
+    for (const QString& command : commands) {
+        const QString token = command.trimmed().toLower();
+        if (!token.isEmpty()) m_filterCommands.insert(token);
+    }
+}
+
+void TuiStatusBar::updateFilterCommandLabel() {
+    if (m_filterCommand.isEmpty()) {
+        m_filterCommandLabel->hide();
+        return;
+    }
+    m_filterCommandLabel->setText(m_filterCommand);
+    m_filterCommandLabel->setVisible(m_isFilterActive);
+}
+
+void TuiStatusBar::clearFilterCommand() {
+    m_filterCommand.clear();
+    m_filterQuery.clear();
+    updateFilterCommandLabel();
+}
+
+void TuiStatusBar::handleFilterTextChanged(const QString& text) {
+    if (!m_filterCommand.isEmpty()) {
+        m_filterQuery = text;
+        emit filterCommandChanged(m_filterCommand, m_filterQuery);
+        return;
+    }
+
+    const int space = text.indexOf(QLatin1Char(' '));
+    if (space > 0) {
+        const QString token = text.left(space).toLower();
+        if (m_filterCommands.contains(token)) {
+            m_filterCommand = token;
+            m_filterQuery = text.mid(space + 1);
+            {
+                QSignalBlocker blocker(m_filterInput);
+                m_filterInput->setText(m_filterQuery);
+                m_filterInput->setCursorPosition(m_filterQuery.size());
+            }
+            updateFilterCommandLabel();
+            emit filterCommandChanged(m_filterCommand, m_filterQuery);
+            return;
+        }
+    }
+
+    emit filterChanged(text);
+}
+
+bool TuiStatusBar::cancelFilterCommand() {
+    if (m_filterCommand.isEmpty()) return false;
+    const QString plain = m_filterQuery.isEmpty()
+        ? m_filterCommand
+        : m_filterCommand + QLatin1Char(' ') + m_filterQuery;
+    clearFilterCommand();
+    {
+        QSignalBlocker blocker(m_filterInput);
+        m_filterInput->setText(plain);
+        m_filterInput->setCursorPosition(plain.size());
+    }
+    emit filterChanged(plain);
+    return true;
+}
+
 void TuiStatusBar::activateFilter() {
     m_isFilterActive = true;
-    m_filterInput->clear();
+    clearFilterCommand();
+    {
+        QSignalBlocker blocker(m_filterInput);
+        m_filterInput->clear();
+    }
     m_filterInput->show();
     m_filterInput->setFocus();
 }
@@ -614,7 +714,11 @@ void TuiStatusBar::activateFilterWithText(const QString& text) {
 
 void TuiStatusBar::deactivateFilter() {
     m_isFilterActive = false;
-    m_filterInput->clear();
+    clearFilterCommand();
+    {
+        QSignalBlocker blocker(m_filterInput);
+        m_filterInput->clear();
+    }
     m_filterInput->hide();
     emit filterDismissed();
 }
@@ -629,6 +733,7 @@ void TuiStatusBar::beginInlinePrompt(bool hidePath) {
         m_pathInput->hide();
     }
     m_filterInput->hide();
+    if (m_filterCommandLabel) m_filterCommandLabel->hide();
     if (m_messageTimer) m_messageTimer->stop();
     m_statusMessageLabel->hide();
     m_promptActive = true;
@@ -644,7 +749,10 @@ void TuiStatusBar::endInlinePrompt() {
     if (m_promptHidesPath) {
         m_pathInput->show();
     }
-    if (m_promptWasFilterVisible) m_filterInput->show();
+    if (m_promptWasFilterVisible) {
+        m_filterInput->show();
+        updateFilterCommandLabel();
+    }
     if (!m_statusMessageLabel->text().isEmpty()) {
         m_statusMessageLabel->show();
         // промпт останавливал таймер, перезапускаем, чтобы бейдж ушёл сам

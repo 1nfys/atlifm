@@ -2,6 +2,9 @@
 #include "ContextMenu.hpp"
 #include "NativePlugins.hpp"
 #include "TuiOutputOverlay.hpp"
+#include "TuiPanesOverlay.hpp"
+#include "ArchiveTreeWidget.hpp"
+#include "../atlifm-models/ArchiveModel.hpp"
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QMimeData>
@@ -10,10 +13,12 @@
 #include <QLabel>
 #include <QDrag>
 #include "TuiInputPopup.hpp"
+#include "BulkCreateDialog.hpp"
 #include "../atlifm-theme/Theme.hpp"
 #include "../atlifm-core/XdgUtils.hpp"
 #include "../atlifm-core/Plugins.hpp"
 #include "../atlifm-core/UndoManager.hpp"
+#include "../atlifm-core/tasks/TaskManager.hpp"
 #include "../atlifm-dnd/DragDropHandler.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -23,13 +28,14 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QTimer>
-#include <QThreadPool>
 #include <QPointer>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QImageReader>
 #include <QPainter>
 #include <QFontMetricsF>
 #include <QSettings>
+#include <QDebug>
 #include <algorithm>
 #include <fstream>
 #include <unordered_set>
@@ -39,7 +45,7 @@ namespace Widgets {
 
 namespace {
 
-// path <-> QString: кодировка файловой системы и обратно
+// конвертация пути файловой системы и строки qstring
 inline QString toQ(const std::filesystem::path& p) {
     return QString::fromUtf8(p.c_str());
 }
@@ -132,6 +138,7 @@ void MillerListView::currentChanged(const QModelIndex& current, const QModelInde
 }
 
 void MillerListView::keyPressEvent(QKeyEvent* event) {
+    emit selectionInteractionStarted();
     if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Backspace) {
         emit navigateToParentRequested();
         return;
@@ -183,7 +190,7 @@ void MillerListView::keyPressEvent(QKeyEvent* event) {
     }
 
     // Shift+стрелки/Home/End/PageUp/PageDown: детерминированный диапазон от anchor;
-    // NoUpdate, т.к. setCurrentIndex() вызывает selectionCommand -> ClearAndSelect
+    // NoUpdate потому что setCurrentIndex вызывает selectionCommand и сбрасывает выбор
     // и сбрасывает весь диапазон Shift
     {
         int k = event->key();
@@ -258,6 +265,25 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
         emit navigateHistoryForwardRequested();
         event->accept();
         return;
+    }
+    // нажатие на колесо мыши по папке: открыть её в новой вкладке
+    if (event->button() == Qt::MiddleButton) {
+        const QModelIndex idx = indexAt(event->pos());
+        if (idx.isValid()) {
+            const QString pathStr = idx.data(Models::FileSystemModel::PathRole).toString();
+            if (!pathStr.isEmpty()) {
+                const std::filesystem::path path(pathStr.toUtf8().toStdString());
+                std::error_code ec;
+                if (std::filesystem::is_directory(path, ec)) {
+                    emit openInNewTabRequested(path);
+                }
+            }
+        }
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton || event->button() == Qt::RightButton) {
+        emit selectionInteractionStarted();
     }
 
     if (event->button() == Qt::LeftButton) {
@@ -422,7 +448,7 @@ void MillerListView::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void MillerListView::mouseMoveEvent(QMouseEvent* event) {
-    // Shift+протяжка по строкам: живое расширение anchor->hovered (DnD при Shift запрещён)
+    // протяжка по строкам с зажатым shift: живое расширение выделения от якоря к текущей строке
     if ((event->buttons() & Qt::LeftButton) && !m_isRubberBanding
         && (event->modifiers() & Qt::ShiftModifier) && model()) {
         QModelIndex hovered = indexAt(event->pos());
@@ -737,6 +763,7 @@ void MillerViewContainer::setupUi() {
     mainLayout->setSpacing(0);
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
+    m_splitter->setObjectName(QStringLiteral("millerSplitter"));
     m_splitter->setHandleWidth(2); // тонкий разделитель колонок, подсветка при наведении акцентом
     m_splitter->setChildrenCollapsible(false);
     m_splitter->setOpaqueResize(true); // плавный ресайз в реальном времени, без рваной фантомной линии
@@ -757,6 +784,12 @@ void MillerViewContainer::setupUi() {
     m_centerDelegate = new FileItemDelegate(false, this);
     m_centerView->setModel(m_centerModel);
     m_centerView->setItemDelegate(m_centerDelegate);
+
+    // центральная колонка: список файлов или содержимое архива, без растягивания
+    // на всю область Miller и без затрагивания соседних колонок
+    m_centerStack = new QStackedWidget(this);
+    m_centerStack->setMinimumWidth(160);
+    m_centerStack->addWidget(m_centerView);
 
     // пустой центр при permission denied: подсказка поверх списка; «try to sudo open»
     // кликабельна (sudo open этого каталога), остальное прозрачна для мыши
@@ -792,7 +825,7 @@ void MillerViewContainer::setupUi() {
     m_previewPane->setMinimumWidth(120);
 
     m_splitter->addWidget(m_parentView);
-    m_splitter->addWidget(m_centerView);
+    m_splitter->addWidget(m_centerStack);
     m_splitter->addWidget(m_previewPane);
     // превью не коллапсируется до нуля: иначе рукоятку между центром и превью
     // перехватывает зона ресайза окна, и полоска уходит за интерфейс без возврата
@@ -802,7 +835,15 @@ void MillerViewContainer::setupUi() {
     m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 3);
     m_splitter->setStretchFactor(2, 1);
-    m_splitter->setSizes({160, 480, 240});
+    m_splitter->setSizes({300, 480, 420});
+    // После восстановления layout колонки держим ровно сохранённой ширины,
+    // пока пользователь сам не потянет рукоятку. Иначе первый resize от WM
+    // мог применить ширины к промежуточному размеру окна а следующий
+    // пропорционально растянуть их и снова получить «не ту» раскладку.
+    connect(m_splitter, &QSplitter::splitterMoved, this, [this]() {
+        m_exactInitialWidths = false;
+        m_initialSizesApplied = true;
+    });
 
     // кнопка с иконкой сортировки в углу центральной колонки (глиф центрируется по чернилам в SortGlyphButton)
     m_sortButton = new SortGlyphButton(m_centerView);
@@ -816,7 +857,58 @@ void MillerViewContainer::setupUi() {
     m_sortButton->show();
     m_sortButton->raise();
 
-    mainLayout->addWidget(m_splitter);
+    mainLayout->addWidget(m_splitter, 1);
+
+    // Страница архива живёт только в центральной колонке: левая и правая
+    // колонки остаются на месте, путь вкладки при этом не меняется.
+    m_archivePage = new QWidget(m_centerStack);
+    auto* archiveLayout = new QVBoxLayout(m_archivePage);
+    archiveLayout->setContentsMargins(0, 0, 0, 0);
+    archiveLayout->setSpacing(0);
+
+    auto* archiveHeader = new QWidget(m_archivePage);
+    auto* archiveHeaderLayout = new QHBoxLayout(archiveHeader);
+    archiveHeaderLayout->setContentsMargins(6, 4, 8, 4);
+    archiveHeaderLayout->setSpacing(8);
+
+    m_archiveBackBtn = new QPushButton(QStringLiteral("\u2190 Back"), archiveHeader);
+    m_archiveBackBtn->setAutoDefault(false);
+    m_archiveBackBtn->setFixedHeight(24);
+    m_archiveBackBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_archiveBackBtn, &QPushButton::clicked, this, &MillerViewContainer::leaveArchive);
+    archiveHeaderLayout->addWidget(m_archiveBackBtn, 0, Qt::AlignVCenter);
+
+    m_archiveHint = new QLabel(QStringLiteral("Esc / Backspace"), archiveHeader);
+    m_archiveHint->setStyleSheet(QStringLiteral("color: %1;").arg(Theme::Colors::Dim().name()));
+    archiveHeaderLayout->addWidget(m_archiveHint, 0, Qt::AlignVCenter);
+    archiveHeaderLayout->addStretch(1);
+    archiveLayout->addWidget(archiveHeader);
+
+    m_archiveModel = new Models::ArchiveModel(this);
+    m_archiveTree = new ArchiveTreeWidget(m_archivePage);
+    m_archiveTree->setArchiveModel(m_archiveModel);
+    m_archiveTree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_archiveTree->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_archiveTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_archiveTree->installEventFilter(this);
+    archiveLayout->addWidget(m_archiveTree, 1);
+    m_centerStack->addWidget(m_archivePage);
+    m_centerStack->setCurrentWidget(m_centerView);
+
+    connect(m_archiveModel, &Models::ArchiveModel::archiveReset, this, [this]() {
+        if (m_archiveTree && !m_archivePath.empty()) m_archiveTree->clearArchive();
+    });
+    connect(m_archiveModel, &Models::ArchiveModel::loaded, this, [this]() {
+        if (!m_archiveTree || m_archivePath.empty() || !m_archiveModel) return;
+        if (m_archiveModel->archivePath() != m_archivePath) return;
+        m_archiveTree->setArchivePath(m_archivePath);
+        m_archiveTree->buildFromEntries(m_archiveModel->entries());
+    });
+    connect(m_archiveModel, &Models::ArchiveModel::loadFailed, this, [this](const QString& error) {
+        if (m_archiveTree && !m_archivePath.empty()) m_archiveTree->showMessage(error);
+    });
+    connect(m_archiveTree, &ArchiveTreeWidget::messageRequested,
+            this, &MillerViewContainer::messageEmitted);
 
     // подключаем изменения выделения и курсора
     connect(m_centerView->selectionModel(), &QItemSelectionModel::selectionChanged,
@@ -883,19 +975,17 @@ void MillerViewContainer::setupUi() {
         setDirectory(p);
     });
     connect(m_centerView, &MillerListView::openFileRequested, this, [this](const std::filesystem::path& p) {
-        // режим выбора файла (диалог/портал): Enter по файлу выбор, а не запуск приложением
-        if (m_fileChooseMode) {
-            emit fileChosenRequested(p);
-            return;
-        }
-        if (tryPluginOverrideWith("open", {p}, p.parent_path())) return;
-        Core::XdgUtils::openWithDefault(p);
+        openFile(p);
     });
     connect(m_centerView, &MillerListView::navigateToParentRequested, this, [this]() {
         if (m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path()) {
-            auto exitedDir = m_currentDir;
+            const auto exitedDir = m_currentDir;
+            const auto parentDir = exitedDir.parent_path();
+            // Сначала переключаем каталог, потому что setDirectory() сбрасывает
+            // отложенный выбор. Потом просим выделить папку, из которой поднялись,
+            // чтобы Right вернул обратно.
+            setDirectory(parentDir);
             selectPathAfterRefresh(exitedDir);
-            setDirectory(m_currentDir.parent_path());
         }
     });
     connect(m_centerView, &MillerListView::navigateHistoryBackRequested, this, &MillerViewContainer::navigateHistoryBackRequested);
@@ -906,13 +996,14 @@ void MillerViewContainer::setupUi() {
         setDirectory(p);
     });
     connect(m_parentView, &MillerListView::openFileRequested, this, [this](const std::filesystem::path& p) {
-        if (tryPluginOverrideWith("open", {p}, p.parent_path())) return;
-        Core::XdgUtils::openWithDefault(p);
+        openFile(p);
     });
     connect(m_parentView, &MillerListView::navigateHistoryBackRequested, this, &MillerViewContainer::navigateHistoryBackRequested);
     connect(m_parentView, &MillerListView::navigateHistoryForwardRequested, this, &MillerViewContainer::navigateHistoryForwardRequested);
 
     connect(m_centerView, &MillerListView::typeAheadSearchTriggered, this, &MillerViewContainer::typeAheadSearchTriggered);
+    connect(m_centerView, &MillerListView::openInNewTabRequested, this, &MillerViewContainer::openInNewTabRequested);
+    connect(m_parentView, &MillerListView::openInNewTabRequested, this, &MillerViewContainer::openInNewTabRequested);
     connect(m_centerView, &MillerListView::filterTriggered, this, &MillerViewContainer::filterTriggered);
     connect(m_centerView, &MillerListView::trashRequested, this, &MillerViewContainer::trashSelection);
     connect(m_centerView, &MillerListView::deletePermanentlyRequested, this, &MillerViewContainer::deletePermanentlySelection);
@@ -934,6 +1025,10 @@ void MillerViewContainer::setupUi() {
     connect(m_previewPane, &PreviewPane::enterDirectoryRequested, this, [this](const std::filesystem::path& p) {
         setDirectory(p);
     });
+    // архив из превью открывается в центре, как папка, а не вторым окном
+    connect(m_previewPane, &PreviewPane::archiveOpenRequested, this, [this](const std::filesystem::path& p) {
+        enterArchive(p);
+    });
 
     // свойства из превью тем же внутренним окном в центре (не в превью)
     connect(m_previewPane, &PreviewPane::propertiesRequested, this, &MillerViewContainer::showPropertiesFor);
@@ -945,6 +1040,14 @@ void MillerViewContainer::setupUi() {
             [this](const QString& id, const std::filesystem::path& target, const std::filesystem::path& cwd) {
         runPluginByIdIn(id, {target}, cwd.empty() ? target.parent_path() : cwd);
     });
+    connect(m_previewPane, &PreviewPane::archiveSelectionInteractionStarted,
+            this, &MillerViewContainer::activateArchiveSelection);
+    connect(m_previewPane, &PreviewPane::messageRequested,
+            this, &MillerViewContainer::messageEmitted);
+    connect(m_centerView, &MillerListView::selectionInteractionStarted,
+            this, &MillerViewContainer::activateFileSelection);
+    connect(m_parentView, &MillerListView::selectionInteractionStarted,
+            this, &MillerViewContainer::activateFileSelection);
 
     // двойной клик по центральной панели
     connect(m_centerView, &QListView::doubleClicked, this, &MillerViewContainer::onCenterDoubleClicked);
@@ -962,11 +1065,8 @@ void MillerViewContainer::setupUi() {
         }
 
         std::vector<std::filesystem::path> sel;
-        bool selIsDir = false;
         if (idx.isValid()) {
             sel = selectedPaths();
-            // тип элемента знает модель: файл под root-каталогом недоступен stat'у пользователя, но листинг от sudo
-            selIsDir = idx.data(Models::FileSystemModel::IsDirRole).toBool();
         } else {
             m_centerModel->clearSelection();
             m_centerView->clearSelection();
@@ -977,23 +1077,12 @@ void MillerViewContainer::setupUi() {
         m_activeContextMenu = menu;
 
         connect(menu, &TuiContextMenu::openRequested, this, &MillerViewContainer::openCurrent);
+        connect(menu, &TuiContextMenu::openInNewTabRequested, this, &MillerViewContainer::openSelectionInNewTab);
         connect(menu, &TuiContextMenu::openWithAppRequested, this, &MillerViewContainer::openWithApp);
         connect(menu, &TuiContextMenu::openWithRequested, this, [this, sel]() {
             if (sel.empty()) return;
             if (tryPluginOverrideWith("open_with", sel, m_currentDir)) return;
             emit openWithDialogRequested(sel.front());
-        });
-        connect(menu, &TuiContextMenu::sudoOpenRequested, this, [this, sel, selIsDir]() {
-            std::filesystem::path target = sel.empty() ? m_currentDir : sel.front();
-            if (sel.empty() || selIsDir) {
-                sudoOpenCurrent(target);
-            } else {
-                QString sudoErr;
-                Core::XdgUtils::openFileWithSudo(target, sudoErr);
-                if (!sudoErr.isEmpty()) {
-                    emit messageEmitted(QString("Sudo denied"));
-                }
-            }
         });
         connect(menu, &TuiContextMenu::clearTrashRequested, this, &MillerViewContainer::clearTrashBin);
         connect(menu, &TuiContextMenu::cutRequested, this, &MillerViewContainer::cutSelection);
@@ -1007,7 +1096,9 @@ void MillerViewContainer::setupUi() {
         connect(menu, &TuiContextMenu::extractHereRequested, this, &MillerViewContainer::extractHere);
         connect(menu, &TuiContextMenu::extractInRequested, this, [this, sel]() {
             if (tryPluginOverrideWith("extract_in", sel, m_currentDir)) return;
-            emit extractInRequested();
+            // меню в hideEvent возвращает фокус колонкам; открываем оверлей следующим
+            // циклом, иначе он сразу теряет фокус и Esc не доходит до диалога
+            QTimer::singleShot(0, this, [this]() { emit extractInRequested(); });
         });
         connect(menu, &TuiContextMenu::openTerminalRequested, this, &MillerViewContainer::openTerminal);
         connect(menu, &TuiContextMenu::newFolderRequested, this, &MillerViewContainer::createNewFolder);
@@ -1031,13 +1122,11 @@ void MillerViewContainer::setupUi() {
         }
 
         std::vector<std::filesystem::path> sel;
-        bool selIsDir = false;
         if (idx.isValid()) {
             QString pathStr = idx.data(Models::FileSystemModel::PathRole).toString();
             if (!pathStr.isEmpty()) {
                 sel.push_back(std::filesystem::path(pathStr.toUtf8().toStdString()));
             }
-            selIsDir = idx.data(Models::FileSystemModel::IsDirRole).toBool();
             m_parentDelegate->setContextMenuRow(idx.row());
             m_parentView->viewport()->update();
         }
@@ -1057,10 +1146,19 @@ void MillerViewContainer::setupUi() {
                 if (std::filesystem::is_directory(sel.front(), ec)) {
                     setDirectory(sel.front());
                 } else {
-                    if (tryPluginOverrideWith("open", sel, sel.front().parent_path())) return;
-                    Core::XdgUtils::openWithDefault(sel.front());
+                    openFile(sel.front());
                 }
             }
+        });
+        connect(menu, &TuiContextMenu::openInNewTabRequested, this, [this, sel, parentDir]() {
+            if (!sel.empty()) {
+                std::error_code ec;
+                if (std::filesystem::is_directory(sel.front(), ec)) {
+                    emit openInNewTabRequested(sel.front());
+                    return;
+                }
+            }
+            emit openInNewTabRequested(parentDir);
         });
         connect(menu, &TuiContextMenu::openWithAppRequested, this, [sel](const QString& execCmd) {
             if (!sel.empty()) {
@@ -1073,18 +1171,6 @@ void MillerViewContainer::setupUi() {
             if (!sel.empty()) {
                 if (tryPluginOverrideWith("open_with", sel, parentDir)) return;
                 emit openWithDialogRequested(sel.front());
-            }
-        });
-        connect(menu, &TuiContextMenu::sudoOpenRequested, this, [this, sel, parentDir, selIsDir]() {
-            std::filesystem::path target = sel.empty() ? parentDir : sel.front();
-            if (sel.empty() || selIsDir) {
-                sudoOpenCurrent(target);
-            } else {
-                QString sudoErr;
-                Core::XdgUtils::openFileWithSudo(target, sudoErr);
-                if (!sudoErr.isEmpty()) {
-                    emit messageEmitted(QString("Sudo denied"));
-                }
             }
         });
         connect(menu, &TuiContextMenu::copyPathRequested, this, [this, sel, parentDir](int mode) {
@@ -1124,6 +1210,12 @@ void MillerViewContainer::setupUi() {
             NativePluginHost::instance().invokeAction(actionId, sel, parentDir);
         });
         menu->popup(globalPos);
+    });
+
+    connect(m_centerModel, &Models::FileSystemModel::globalSearchFinished, this, [this](int count) {
+        if (count > 0 && m_centerView->model()) {
+            m_centerView->setCurrentIndex(m_centerModel->index(0, 0));
+        }
     });
 
     // уведомления о загрузке модели
@@ -1319,6 +1411,9 @@ void MillerViewContainer::saveSortForCurrentDir() {
 
 void MillerViewContainer::setDirectory(const std::filesystem::path& path) {
     if (path.empty()) return;
+    if (isArchiveViewActive()) leaveArchive();
+    m_archiveSelectionActive = false;
+    if (m_previewPane) m_previewPane->clearArchiveSelection();
 
     std::error_code ec;
     m_currentDir = std::filesystem::canonical(std::filesystem::absolute(path), ec);
@@ -1378,7 +1473,31 @@ void MillerViewContainer::setFilter(const QString& filter) {
     }
 }
 
+void MillerViewContainer::searchEverywhere(const QString& query) {
+    m_centerModel->searchEverywhere(query);
+}
+
+void MillerViewContainer::searchContents(const QString& query) {
+    m_centerModel->searchContents(query);
+}
+
+void MillerViewContainer::clearGlobalSearch() {
+    m_centerModel->clearGlobalSearch();
+}
+
+bool MillerViewContainer::hasGlobalSearch() const {
+    return m_centerModel && m_centerModel->globalSearchActive();
+}
+
+void MillerViewContainer::focusCenter() {
+    m_centerView->setFocus();
+}
+
 std::vector<std::filesystem::path> MillerViewContainer::selectedPaths() const {
+    // страница архива перекрывает колонки: скрытый выбор файлов не должен
+    // участвовать в delete/rename/cut и других файловых операциях
+    if (isArchiveViewActive()) return {};
+
     auto multiSel = m_centerModel->selectedPaths();
     if (!multiSel.empty()) return multiSel;
 
@@ -1401,6 +1520,46 @@ std::vector<std::filesystem::path> MillerViewContainer::selectedPaths() const {
         res.push_back(std::filesystem::path(pathStr.toUtf8().toStdString()));
     }
     return res;
+}
+
+std::vector<std::filesystem::path> MillerViewContainer::currentEntries() const {
+    std::vector<std::filesystem::path> entries;
+    if (!m_centerModel) return entries;
+    const int rows = m_centerModel->rowCount();
+    entries.reserve(static_cast<size_t>(rows));
+    for (int row = 0; row < rows; ++row) {
+        const QString path = m_centerModel->index(row, 0)
+                                 .data(Models::FileSystemModel::PathRole).toString();
+        if (!path.isEmpty()) entries.emplace_back(path.toUtf8().toStdString());
+    }
+    if (!entries.empty()) return entries;
+
+    // Палитра может открыться до асинхронной загрузки модели или в момент,
+    // когда m_currentDir ещё не выставлен. Читаем каталог напрямую, иначе
+    // поиск показывает "No entries" в непустой папке.
+    std::filesystem::path scanDir = m_currentDir;
+    if (scanDir.empty()) scanDir = m_centerModel->currentDirectory();
+    if (scanDir.empty()) return entries;
+
+    const bool showHidden = m_centerModel->showHidden();
+    std::error_code ec;
+    std::filesystem::directory_iterator it(scanDir, ec);
+    const std::filesystem::directory_iterator end;
+    if (ec) {
+        qWarning("[palette] cannot read current folder %s: %s",
+                 scanDir.c_str(), ec.message().c_str());
+        return entries;
+    }
+    for (; it != end && entries.size() < 10000; it.increment(ec)) {
+        if (ec) break;
+        const auto& path = it->path();
+        if (!showHidden && !path.filename().empty() &&
+            path.filename().string().front() == '.') {
+            continue;
+        }
+        entries.push_back(path);
+    }
+    return entries;
 }
 
 void MillerViewContainer::toggleHidden() {
@@ -1455,7 +1614,7 @@ public:
         applyStyle();
     }
     void setIdleColor(const QColor& c) { m_idleFg = c; applyStyle(); }
-    // размер шрифта в персональном stylesheet: application QSS (`* { font-size: ...px }`)
+    // размер шрифта в персональной таблице стилей приложения
     // перебивает QWidget::setFont
     void setFontPx(int px) { m_fontPx = px; applyStyle(); }
 
@@ -1618,10 +1777,10 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
 
     const bool readable = (::access(dir.c_str(), R_OK | X_OK) == 0);
 
-    // одна авторизация на действие (папка = один пароль): живой тикет молча `sudo -n find`;
-    // иначе ровно один вызов pkexec (диалог пароля десктопа), его вывод наполняет колонки
-    // через provideSudoListingTree, вторых привилегированных вызовов нет (второй pkexec = второй диалог);
-    // без polkit резерв: попап пароля (ensureSudoAuthenticated) → `sudo -n find`
+    // одна авторизация на действие где живой тикет молча запускает sudo find
+    // иначе ровно один вызов pkexec и его вывод наполняет колонки
+    // через provideSudoListingTree а вторых привилегированных вызовов нет
+    // без polkit резерв: попап пароля и запуск sudo find
     bool folderEmpty = false;
     bool sudoDenied = false;
     bool aborted = false;     // авторизация отклонена: каталог не открываем
@@ -1643,7 +1802,7 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
         // в кэше листинги всех подкаталогов, навигация на любую глубину без новых
         // диалогов pkexec. Разделитель NUL записей + полный путь %p
         // (см. provideSudoListingTree): имя с '\n' не инжектит записи, хвост,
-        // обрезанный head -c, отбрасывается
+        // обрезанный по лимиту head вывод отбрасывается
         QString treeOut;
         QString treeErr;
         const Core::XdgUtils::SudoListStatus status =
@@ -1709,7 +1868,7 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
                                      .arg(probeOutLen)
                                      .arg(probeErr));
 
-    // короткие плашки (обе ≤ 15 знаков); подробности в sudo-debug.log
+    // короткие плашки и подробности в логе отладки
     emit messageEmitted(sudoDenied ? QString("Sudo denied") : QString("Sudo open"));
 }
 
@@ -1721,16 +1880,90 @@ void MillerViewContainer::clearTrashBin() {
     }
 }
 
+void MillerViewContainer::activateArchiveSelection() {
+    m_archiveSelectionActive = true;
+    if (auto* sm = m_centerView->selectionModel()) {
+        QSignalBlocker blocker(sm);
+        sm->clearSelection();
+    }
+    m_centerModel->clearSelection();
+    m_centerDelegate->setCheckmarksEnabled(false);
+    if (m_centerView->viewport()) m_centerView->viewport()->update();
+    updateCenterSelection();
+}
+
+void MillerViewContainer::activateFileSelection() {
+    m_archiveSelectionActive = false;
+    if (m_previewPane) m_previewPane->clearArchiveSelection();
+}
+
 void MillerViewContainer::selectAll() {
-    // selectAll() триггерит selectionChanged -> onCenterSelectionChanged сам синхронизирует модель
+    if (isArchiveViewActive()) {
+        m_archiveTree->selectAllEntries();
+        return;
+    }
+    if (m_archiveSelectionActive) {
+        m_previewPane->selectAllArchiveEntries();
+        return;
+    }
+    // selectAll триггерит selectionChanged и синхронизирует модель
     m_centerView->selectAll();
 }
 
 void MillerViewContainer::clearSelection() {
+    if (isArchiveViewActive()) {
+        m_archiveTree->clearEntrySelection();
+        return;
+    }
+    if (m_archiveSelectionActive) {
+        m_archiveSelectionActive = false;
+        m_previewPane->clearArchiveSelection();
+        m_centerView->clearSelection();
+        m_centerModel->clearSelection();
+        m_centerView->setCurrentIndex(QModelIndex());
+        updateCenterSelection();
+        return;
+    }
     m_centerView->clearSelection();
     m_centerModel->clearSelection();
     m_centerView->setCurrentIndex(QModelIndex());
     updateCenterSelection();
+}
+
+void MillerViewContainer::selectFirst() {
+    if (isArchiveViewActive()) {
+        m_archiveTree->selectFirstEntry();
+        return;
+    }
+    if (m_archiveSelectionActive) {
+        m_previewPane->selectFirstArchiveEntry();
+        return;
+    }
+    if (!m_centerModel || m_centerModel->rowCount() == 0) return;
+    const QModelIndex index = m_centerModel->index(0, 0);
+    m_centerView->setCurrentIndex(index);
+    if (auto* sm = m_centerView->selectionModel()) {
+        sm->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    }
+    m_centerView->scrollTo(index, QAbstractItemView::PositionAtTop);
+}
+
+void MillerViewContainer::selectLast() {
+    if (isArchiveViewActive()) {
+        m_archiveTree->selectLastEntry();
+        return;
+    }
+    if (m_archiveSelectionActive) {
+        m_previewPane->selectLastArchiveEntry();
+        return;
+    }
+    if (!m_centerModel || m_centerModel->rowCount() == 0) return;
+    const QModelIndex index = m_centerModel->index(m_centerModel->rowCount() - 1, 0);
+    m_centerView->setCurrentIndex(index);
+    if (auto* sm = m_centerView->selectionModel()) {
+        sm->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    }
+    m_centerView->scrollTo(index, QAbstractItemView::PositionAtBottom);
 }
 
 std::filesystem::path MillerViewContainer::computeNeighbourPath(
@@ -1789,6 +2022,7 @@ void MillerViewContainer::refresh() {
 
 void MillerViewContainer::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    if (m_pluginPanes && m_pluginPanes->isVisible()) m_pluginPanes->repositionWithinParent();
     applyResponsiveSizes();
 }
 
@@ -1839,6 +2073,13 @@ void MillerViewContainer::positionCenterDeniedOverlay() {
 }
 
 bool MillerViewContainer::eventFilter(QObject* watched, QEvent* event) {
+    if (m_archiveTree && watched == m_archiveTree && event->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Escape || ke->key() == Qt::Key_Backspace) {
+            leaveArchive();
+            return true;
+        }
+    }
     if (m_centerView && watched == m_centerView->viewport() && event->type() == QEvent::Resize) {
         positionCenterDeniedOverlay();
     }
@@ -1854,6 +2095,59 @@ bool MillerViewContainer::eventFilter(QObject* watched, QEvent* event) {
         }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void MillerViewContainer::setColumnsConfig(bool showParent, bool showPreview,
+                                           int parentWidth, int previewWidth,
+                                           bool exactWidths) {
+    m_parentColumnEnabled = showParent;
+    m_previewColumnEnabled = showPreview;
+    // сохранённая раскладка может быть любой ширины: жёсткие 800/1000
+    // обрезали реальный preview и после рестарта колонки выглядели иначе.
+    // Реальный предел проверяет applyResponsiveSizes() по ширине окна.
+    m_parentColumnWidth = std::clamp(parentWidth, 80, 10000);
+    m_previewColumnWidth = std::clamp(previewWidth, 80, 10000);
+    m_initialSizesApplied = false;
+    m_exactInitialWidths = exactWidths;
+    m_parentAutoHidden = false;
+    m_previewAutoHidden = false;
+
+    if (m_parentView) {
+        m_parentView->setMaximumWidth(std::max(320, m_parentColumnWidth));
+        if (!m_parentColumnEnabled) m_parentView->hide();
+    }
+    if (m_previewPane && !m_previewColumnEnabled) m_previewPane->hide();
+    if (isVisible()) {
+        QTimer::singleShot(0, this, [this]() {
+            applyResponsiveSizes();
+            update();
+        });
+    }
+}
+
+void MillerViewContainer::relayoutColumns() {
+    m_initialSizesApplied = false;
+    if (!isVisible()) return;
+    QTimer::singleShot(0, this, [this]() {
+        applyResponsiveSizes();
+        update();
+    });
+}
+
+int MillerViewContainer::parentColumnWidth() const {
+    if (m_splitter) {
+        const QList<int> sizes = m_splitter->sizes();
+        if (!sizes.isEmpty() && sizes.front() > 0) return sizes.front();
+    }
+    return m_parentColumnWidth;
+}
+
+int MillerViewContainer::previewColumnWidth() const {
+    if (m_splitter) {
+        const QList<int> sizes = m_splitter->sizes();
+        if (sizes.size() >= 3 && sizes.back() > 0) return sizes.back();
+    }
+    return m_previewColumnWidth;
 }
 
 void MillerViewContainer::applyResponsiveSizes() {
@@ -1872,41 +2166,79 @@ void MillerViewContainer::applyResponsiveSizes() {
     // рукоятке bookmarks без хода
     const int centerMin = (total < 250) ? 56 : ((total < 300) ? 120 : 160);
     if (m_centerView->minimumWidth() != centerMin) m_centerView->setMinimumWidth(centerMin);
+    if (m_centerStack && m_centerStack->minimumWidth() != centerMin) m_centerStack->setMinimumWidth(centerMin);
+
+    const bool wantParent = m_parentColumnEnabled && total >= kHideParentBelow;
+    const bool wantPreview = m_previewColumnEnabled && total >= kHidePreviewBelow;
 
     bool visibilityChanged = false;
-    if (total < kHideParentBelow) {
+    if (!wantParent) {
         if (m_parentView->isVisible()) {
             m_parentView->hide();
             m_parentAutoHidden = true;
             visibilityChanged = true;
         }
-    } else if (m_parentAutoHidden && !m_parentView->isVisible()) {
+    } else if (!m_parentView->isVisible()) {
         m_parentView->show();
         m_parentAutoHidden = false;
         visibilityChanged = true;
     }
 
-    if (total < kHidePreviewBelow) {
+    if (!wantPreview) {
         if (m_previewPane->isVisible()) {
             m_previewPane->hide();
             m_previewAutoHidden = true;
             visibilityChanged = true;
         }
-    } else if (m_previewAutoHidden && !m_previewPane->isVisible()) {
+    } else if (!m_previewPane->isVisible()) {
         m_previewPane->show();
         m_previewAutoHidden = false;
         visibilityChanged = true;
     }
 
-    // комфортная раскладка при первом показе, один раз
-    if (!m_initialSizesApplied && m_parentView->isVisible() && m_previewPane->isVisible() && total >= 460) {
+    // Комфортная раскладка при первом показе. Сохранённую раскладку
+    // применяем на каждом изменении размера, пока пользователь не потянул
+    // рукоятку: так промежуточный размер окна от WM не «замораживает»
+    // неправильные ширины после рестарта.
+    if ((m_exactInitialWidths || !m_initialSizesApplied) && total >= 460) {
         m_initialSizesApplied = true;
-        int parentW = std::clamp(total * 16 / 100, 140, 180);
-        int previewW = std::max(120, total * 35 / 100);
-        int centerW = total - parentW - previewW;
+        const int handles = 2 * m_splitter->handleWidth();
+        const int avail = std::max(0, total - handles);
+        // Боковые колонки не должны выглядеть полосками: по умолчанию даём
+        // родителю до четверти и превью до трети ширины а значения конфига работают
+        // как желаемая ширина в этих пределах.
+        // Для сохранённой раскладки ширины должны восстанавливаться ровно.
+        // Ограничение avail/2 ломало раскладки, где preview шире половины окна:
+        // например, 120 + 786 + 1000 при окне 1910 сохранялось как 1000,
+        // а после рестарта превращалось в 953. Оставляем запас только на
+        // вторую боковую колонку (120) и минимальный центр (200).
+        const int exactSideCap = std::max(120, avail - 320);
+        const int parentCap = m_exactInitialWidths
+            ? exactSideCap
+            : std::max(120, avail / 4);
+        const int previewCap = m_exactInitialWidths
+            ? exactSideCap
+            : std::max(120, avail * 35 / 100);
+        // wantParent/wantPreview, а не isVisible(): при первом resizeEvent
+        // главное окно еще не показано и видимость у детей false
+        int parentW = wantParent
+            ? std::clamp(m_parentColumnWidth, 120, parentCap)
+            : 0;
+        int previewW = wantPreview
+            ? std::clamp(m_previewColumnWidth, 120, previewCap)
+            : 0;
+        int centerW = avail - parentW - previewW;
         if (centerW < 200) {
-            centerW = 200;
-            previewW = std::max(120, total - parentW - centerW);
+            centerW = std::min(avail, 200);
+            if (previewW > 0) {
+                previewW = std::clamp(avail - parentW - centerW, 120,
+                                      std::max(120, avail - parentW));
+            }
+            if (parentW > 0) {
+                parentW = std::clamp(avail - previewW - centerW, 120,
+                                     std::max(120, avail - previewW));
+            }
+            centerW = std::max(0, avail - parentW - previewW);
         }
         m_splitter->setSizes({parentW, centerW, previewW});
         return;
@@ -1970,9 +2302,27 @@ void MillerViewContainer::updateCenterSelection() {
         QString pathStr = curr.data(Models::FileSystemModel::PathRole).toString();
         std::filesystem::path p(pathStr.toUtf8().toStdString());
         m_previewPane->previewPath(p);
+        // соседние видео/PDF греются заранее; prefetch сам ограничивает очередь
+        const int row = curr.row();
+        if (row > 0) {
+            const QString prev = m_centerModel->index(row - 1, 0)
+                                     .data(Models::FileSystemModel::PathRole).toString();
+            if (!prev.isEmpty()) m_previewPane->prefetchPath(
+                std::filesystem::path(prev.toUtf8().toStdString()));
+        }
+        if (row + 1 < m_centerModel->rowCount()) {
+            const QString next = m_centerModel->index(row + 1, 0)
+                                     .data(Models::FileSystemModel::PathRole).toString();
+            if (!next.isEmpty()) m_previewPane->prefetchPath(
+                std::filesystem::path(next.toUtf8().toStdString()));
+        }
         emit itemSelected(p);
     } else {
         m_previewPane->clearPreview();
+    }
+    if (m_archiveSelectionActive && !m_previewPane->archivePageActive()) {
+        m_archiveSelectionActive = false;
+        m_previewPane->clearArchiveSelection();
     }
 
     int totalCount = m_centerModel->rowCount();
@@ -2002,11 +2352,85 @@ void MillerViewContainer::onCenterDoubleClicked(const QModelIndex& index) {
     std::filesystem::path p(pathStr.toUtf8().toStdString());
     if (isDir) {
         setDirectory(p);
-    } else if (m_fileChooseMode) {
-        emit fileChosenRequested(p);
     } else {
-        Core::XdgUtils::openWithDefault(p);
+        openFile(p);
     }
+}
+
+void MillerViewContainer::openFile(const std::filesystem::path& path) {
+    if (path.empty()) return;
+    if (m_fileChooseMode) {
+        emit fileChosenRequested(path);
+        return;
+    }
+    if (tryPluginOverrideWith("open", {path}, path.parent_path())) return;
+    if (Core::XdgUtils::isArchive(path)) {
+        enterArchive(path);
+        return;
+    }
+    Core::XdgUtils::openWithDefault(path);
+}
+
+void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath) {
+    if (archivePath.empty() || !m_centerStack || !m_archiveTree || !m_archiveModel) return;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(archivePath, ec) || ec) return;
+
+    m_archivePath = archivePath;
+    // файловые операции/Escape не должны действовать на скрытый архив под страницей
+    if (m_centerModel) m_centerModel->clearSelection();
+    if (m_centerView) {
+        m_centerView->clearSelection();
+        m_centerView->setCurrentIndex(QModelIndex());
+    }
+
+    m_archiveTree->setArchivePath(archivePath);
+    m_centerStack->setCurrentWidget(m_archivePage);
+
+    // как при открытии папки: слева каталог архива, сам архив подсвечен
+    if (m_parentModel && !archivePath.parent_path().empty()) {
+        const auto parent = archivePath.parent_path();
+        m_parentModel->setDirectory(parent);
+        applySortToModel(parent, m_parentModel);
+        if (m_parentDelegate) m_parentDelegate->setHighlightedPath(archivePath);
+        if (auto* sm = m_parentView->selectionModel()) {
+            sm->clearSelection();
+            const int row = m_parentModel->findRowByPath(archivePath);
+            sm->setCurrentIndex(row >= 0 ? m_parentModel->index(row, 0) : QModelIndex(),
+                                QItemSelectionModel::NoUpdate);
+        }
+        if (m_parentView && m_parentView->viewport()) m_parentView->viewport()->update();
+    }
+
+    m_archiveModel->setArchive(archivePath);
+    if (m_archiveModel->isLoading()) {
+        m_archiveTree->showMessage(QStringLiteral("Reading archive\u2026"));
+    } else if (m_archiveModel->isLoaded()) {
+        m_archiveTree->buildFromEntries(m_archiveModel->entries());
+    } else if (!m_archiveModel->error().isEmpty()) {
+        m_archiveTree->showMessage(m_archiveModel->error());
+    }
+
+    m_archiveTree->setFocus();
+    emit archiveEntered(archivePath);
+}
+
+void MillerViewContainer::leaveArchive() {
+    if (m_archivePath.empty()) return;
+    m_archivePath.clear();
+    if (m_archiveTree) m_archiveTree->clearArchive();
+    if (m_centerStack) m_centerStack->setCurrentWidget(m_centerView);
+    // возвращаем левую колонку к родителю текущего каталога
+    if (m_parentModel) {
+        const bool hasParent =
+            m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path();
+        const auto parent = hasParent ? m_currentDir.parent_path() : m_currentDir;
+        m_parentModel->setDirectory(parent);
+        applySortToModel(parent, m_parentModel);
+    }
+    syncParentViewToCurrentDir();
+    if (m_centerView) m_centerView->setFocus();
+    emit archiveLeft(m_currentDir);
 }
 
 void MillerViewContainer::setMultiSelectEnabled(bool enabled) {
@@ -2021,6 +2445,7 @@ void MillerViewContainer::onFilesDropped(const std::vector<std::filesystem::path
                                          Qt::KeyboardModifiers modifiers) {
     // handleDrop уже делает selectPathAfterRefresh(firstDest) + refresh(); лишний
     // отложенный refresh создал бы гонку и сбросил фокус строку 0
+    if (auto* view = qobject_cast<MillerListView*>(sender())) view->setFocus();
     Dnd::DragDropHandler::handleDrop(sources, targetDir, action, modifiers, this);
 }
 
@@ -2032,10 +2457,21 @@ void MillerViewContainer::openCurrent() {
         if (std::filesystem::is_directory(target, ec)) {
             setDirectory(target);
         } else {
-            if (tryPluginOverride("open")) return;
-            Core::XdgUtils::openWithDefault(target);
+            openFile(target);
         }
     }
+}
+
+void MillerViewContainer::openSelectionInNewTab() {
+    bool opened = false;
+    for (const auto& path : selectedPaths()) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(path, ec)) {
+            emit openInNewTabRequested(path);
+            opened = true;
+        }
+    }
+    if (!opened) emit openInNewTabRequested(m_currentDir);
 }
 
 void MillerViewContainer::openWithApp(const QString& execCmd) {
@@ -2050,7 +2486,7 @@ void MillerViewContainer::openWithApp(const QString& execCmd) {
 
 namespace {
 
-// общая сборка mime для буфера обмена при cut/copy: список URI, обычный текст и gnome-copied-files
+// общая сборка mime для буфера обмена: список uri обычный текст и gnome copied files
 QMimeData* buildClipboardMimeData(const std::vector<std::filesystem::path>& paths, bool isCut) {
     auto mimeData = new QMimeData();
     QList<QUrl> urls;
@@ -2071,6 +2507,7 @@ QMimeData* buildClipboardMimeData(const std::vector<std::filesystem::path>& path
 }
 
 void MillerViewContainer::cutSelection() {
+    if (m_archiveSelectionActive) return;
     if (tryPluginOverride("cut")) return;
     auto sel = selectedPaths();
     if (sel.empty()) return;
@@ -2080,6 +2517,14 @@ void MillerViewContainer::cutSelection() {
 }
 
 void MillerViewContainer::copySelection() {
+    if (isArchiveViewActive()) {
+        m_archiveTree->copySelectedEntries();
+        return;
+    }
+    if (m_archiveSelectionActive) {
+        m_previewPane->copyArchiveSelection();
+        return;
+    }
     if (tryPluginOverride("copy")) return;
     auto sel = selectedPaths();
     if (sel.empty()) return;
@@ -2104,7 +2549,17 @@ void MillerViewContainer::copySelection() {
     emit messageEmitted(QString("Copy %1").arg(sel.size()));
 }
 
+void MillerViewContainer::clipboardPaths(const std::vector<std::filesystem::path>& paths, bool cut) {
+    if (paths.empty()) return;
+    if (tryPluginOverrideWith(cut ? "cut" : "copy", paths, m_currentDir)) return;
+
+    QApplication::clipboard()->setMimeData(buildClipboardMimeData(paths, cut));
+    emit messageEmitted(cut ? QString("Cut %1").arg(paths.size())
+                            : QString("Copy %1").arg(paths.size()));
+}
+
 void MillerViewContainer::pasteClipboard() {
+    if (m_archiveSelectionActive) return;
     if (tryPluginOverride("paste")) return;
     const QMimeData* mimeData = QApplication::clipboard()->mimeData();
     if (!mimeData) return;
@@ -2131,6 +2586,7 @@ void MillerViewContainer::pasteClipboard() {
 }
 
 void MillerViewContainer::copyPaths(int mode) {
+    if (m_archiveSelectionActive) return;
     // перехват плагином: 0 = copy_path (abs), 1 = copy_name, 2 = copy_rel_path
     static const char* const copyIds[] = {"copy_path", "copy_name", "copy_rel_path"};
     if (mode >= 0 && mode <= 2 && tryPluginOverride(QLatin1String(copyIds[mode])))
@@ -2158,11 +2614,81 @@ void MillerViewContainer::copyPaths(int mode) {
 }
 
 void MillerViewContainer::renameCurrent() {
+    if (m_archiveSelectionActive) return;
     if (tryPluginOverride("rename")) return;
     auto sel = selectedPaths();
     if (sel.empty()) return;
 
-    const auto& oldPath = sel.front();
+    if (sel.size() > 1) {
+        emit bulkRenameRequested(sel);
+        return;
+    }
+
+    renamePath(sel.front());
+}
+
+void MillerViewContainer::applyBulkRenames(
+    const std::vector<std::pair<std::filesystem::path, std::filesystem::path>>& renames) {
+    if (renames.empty()) return;
+
+    QPointer<MillerViewContainer> self(this);
+    const std::filesystem::path firstTarget = renames.front().second;
+    auto cancelToken = std::make_shared<std::atomic_bool>(false);
+    emit messageEmitted(QString("Renaming %1 items...").arg(renames.size()));
+    Core::Tasks::TaskManager::instance().submit(
+        QString("Bulk rename %1 items").arg(renames.size()),
+        QStringLiteral("io"),
+        [self, renames, cancelToken, firstTarget](Core::Tasks::TaskContext& ctx) {
+            std::vector<Core::UndoItem> moved;
+            QStringList errors;
+            for (size_t i = 0; i < renames.size(); ++i) {
+                if (ctx.cancelled()) break;
+                const auto& [source, target] = renames[i];
+                std::error_code ec;
+                if (std::filesystem::exists(target, ec)) {
+                    const QString message = QStringLiteral("Already exists: %1")
+                                                .arg(QString::fromUtf8(target.c_str()));
+                    errors << message;
+                    ctx.log(message);
+                } else {
+                    QString err;
+                    if (Core::XdgUtils::moveItem(source, target, err, {}, ctx.cancelToken())) {
+                        moved.push_back({source, target, {}});
+                    } else {
+                        const QString message = err.isEmpty()
+                            ? QStringLiteral("Failed to rename %1").arg(QString::fromUtf8(source.c_str()))
+                            : err;
+                        errors << message;
+                        ctx.log(message);
+                    }
+                }
+                ctx.progress(static_cast<qint64>(i + 1), static_cast<qint64>(renames.size()));
+            }
+            if (!moved.empty()) {
+                Core::UndoManager::instance().recordMultiMove(moved, "Bulk rename");
+            }
+            const bool cancelled = ctx.cancelled();
+            const QString error = errors.join(QChar('\n'));
+            QMetaObject::invokeMethod(qApp, [self, cancelled, error, moved, firstTarget]() {
+                if (!self) return;
+                if (!moved.empty()) self->selectPathAfterRefresh(firstTarget);
+                self->refresh();
+                if (!moved.empty()) {
+                    self->messageEmitted(QString("Renamed %1 items").arg(moved.size()));
+                }
+                if (!error.isEmpty()) {
+                    TuiConfirmPopup::alert(self.data(), "Bulk Rename", error.left(2000));
+                } else if (cancelled) {
+                    self->messageEmitted(QString("Bulk rename cancelled (%1 applied)")
+                                             .arg(moved.size()));
+                }
+            }, Qt::QueuedConnection);
+        },
+        0, cancelToken);
+}
+
+void MillerViewContainer::renamePath(const std::filesystem::path& oldPath) {
+    if (oldPath.empty()) return;
     QString oldName = QString::fromUtf8(oldPath.filename().c_str());
     std::error_code ec;
     bool isFile = !std::filesystem::is_directory(oldPath, ec);
@@ -2204,8 +2730,15 @@ void MillerViewContainer::renameCurrent() {
 }
 
 void MillerViewContainer::trashSelection() {
-    if (tryPluginOverride("trash")) return;
+    if (m_archiveSelectionActive) return;
     auto sel = selectedPaths();
+    if (sel.empty()) return;
+    trashPaths(sel, false);
+}
+
+void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& sel,
+                                     bool checkPluginOverride) {
+    if (checkPluginOverride && tryPluginOverrideWith("trash", sel, m_currentDir)) return;
     if (sel.empty()) return;
 
     // если элементы уже в корзине, перемещение в корзину бессмысленно, удаляем навсегда
@@ -2222,24 +2755,51 @@ void MillerViewContainer::trashSelection() {
         }
     }
     if (inTrash) {
-        deletePermanentlySelection();
+        deletePathsPermanently(sel, false);
         return;
     }
 
     // запоминаем соседа, чтобы после удаления фокус не попал на строку 0 (правило 3B)
     std::filesystem::path neighbour = computeNeighbourPath(sel);
 
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
-    // фон: gio trash / QFile::moveToTrash могут висеть до 3с, не фризим GUI
     emit messageEmitted(QString("Moving %1 to trash...").arg(sel.size()));
     QPointer<MillerViewContainer> self(this);
-    QThreadPool::globalInstance()->start([self, sel, neighbour]() mutable {
-        QString err;
-        std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
-        bool ok = Core::XdgUtils::moveToTrash(sel, err, &moved);
-        QMetaObject::invokeMethod(qApp, [self, ok, err, moved, neighbour, sel]() mutable {
-            if (!self) return;
-            if (ok) {
+    // каждый элемент это отдельный шаг задачи: прогресс и отмена между файлами,
+    // а не одна непрозрачная пачка. Ошибка одного файла не отменяет остальные.
+    Core::Tasks::TaskManager::instance().submit(
+        QString("Trash %1 item(s)").arg(sel.size()),
+        QStringLiteral("io"),
+        [self, sel, neighbour](Core::Tasks::TaskContext& ctx) mutable {
+            std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
+            QStringList errors;
+            for (size_t i = 0; i < sel.size(); ++i) {
+                if (ctx.cancelled()) break;
+                std::vector<std::filesystem::path> one{sel[i]};
+                std::vector<std::pair<std::filesystem::path, std::filesystem::path>> movedOne;
+                QString err;
+                if (Core::XdgUtils::moveToTrash(one, err, &movedOne)) {
+                    moved.insert(moved.end(), movedOne.begin(), movedOne.end());
+                } else {
+                    const QString message = err.isEmpty()
+                        ? QStringLiteral("Failed to trash %1").arg(QString::fromUtf8(sel[i].c_str()))
+                        : err;
+                    errors << message;
+                    ctx.log(message);
+                }
+                ctx.progress(static_cast<qint64>(i + 1), static_cast<qint64>(sel.size()));
+            }
+
+            // Не пишем в лог каждый успешный файл, потому что на тысячах
+            // файлов это забивает кольцевой буфер и UI. Ошибки логируем выше.
+            if (!moved.empty()) {
+                ctx.log(QStringLiteral("Moved %1 item(s) to trash").arg(moved.size()));
+            }
+
+            const bool cancelled = ctx.cancelled();
+            const QString error = errors.join(QChar('\n'));
+            const bool ok = errors.isEmpty();
+            QMetaObject::invokeMethod(qApp, [self, ok, cancelled, error, moved, neighbour, sel]() mutable {
+                if (!self) return;
                 if (!moved.empty()) {
                     std::vector<Core::UndoItem> undoItems;
                     undoItems.reserve(moved.size());
@@ -2250,17 +2810,28 @@ void MillerViewContainer::trashSelection() {
                 }
                 if (!neighbour.empty()) self->selectPathAfterRefresh(neighbour);
                 self->refresh();
-                self->messageEmitted(QString("Trash %1").arg(sel.size()));
-            } else {
-                TuiConfirmPopup::alert(self.data(), "Trash Error", err);
-            }
-        }, Qt::QueuedConnection);
-    });
+                if (cancelled) {
+                    self->messageEmitted(QString("Trash cancelled (%1 moved)").arg(moved.size()));
+                } else if (ok) {
+                    self->messageEmitted(QString("Trash %1").arg(sel.size()));
+                } else {
+                    self->messageEmitted(QString("Trash %1: %2 failed").arg(moved.size()).arg(sel.size() - moved.size()));
+                    TuiConfirmPopup::alert(self.data(), "Trash Error", error);
+                }
+            }, Qt::QueuedConnection);
+        });
 }
 
 void MillerViewContainer::deletePermanentlySelection() {
-    if (tryPluginOverride("delete_perm")) return;
+    if (m_archiveSelectionActive) return;
     auto sel = selectedPaths();
+    if (sel.empty()) return;
+    deletePathsPermanently(sel, false);
+}
+
+void MillerViewContainer::deletePathsPermanently(const std::vector<std::filesystem::path>& sel,
+                                                 bool checkPluginOverride) {
+    if (checkPluginOverride && tryPluginOverrideWith("delete_perm", sel, m_currentDir)) return;
     if (sel.empty()) return;
 
     bool confirmed = TuiConfirmPopup::ask(this, "",
@@ -2268,27 +2839,59 @@ void MillerViewContainer::deletePermanentlySelection() {
         "Yes", "No", true);
     if (confirmed) {
         std::filesystem::path neighbour = computeNeighbourPath(sel);
-        // фон: sudo rm может висеть до 3с на файл, не фризим GUI
         emit messageEmitted(QString("Deleting %1...").arg(sel.size()));
         QPointer<MillerViewContainer> self(this);
-        QThreadPool::globalInstance()->start([self, sel, neighbour]() mutable {
-            QString err;
-            bool ok = Core::XdgUtils::deletePermanently(sel, err);
-            QMetaObject::invokeMethod(qApp, [self, ok, err, sel, neighbour]() mutable {
-                if (!self) return;
-                if (ok) {
-                    if (!neighbour.empty()) self->selectPathAfterRefresh(neighbour);
-                    self->refresh();
-                    self->messageEmitted(QString("Deleted %1").arg(sel.size()));
-                } else {
-                    TuiConfirmPopup::alert(self.data(), "Delete Error", err);
+        Core::Tasks::TaskManager::instance().submit(
+            QString("Delete %1 item(s)").arg(sel.size()),
+            QStringLiteral("io"),
+            [self, sel, neighbour](Core::Tasks::TaskContext& ctx) mutable {
+                QString err;
+                const bool ok = Core::XdgUtils::deletePermanently(sel, err, ctx.cancelToken());
+                const bool cancelled = ctx.cancelled();
+
+                // При отмене часть файлов уже могла быть удалена. Считаем
+                // фактический результат и не пишем «Delete cancelled», если
+                // удаление все таки прошло
+                size_t removed = 0;
+                for (const auto& p : sel) {
+                    std::error_code ec;
+                    const auto status = std::filesystem::symlink_status(p, ec);
+                    if (!std::filesystem::exists(status)) ++removed;
                 }
-            }, Qt::QueuedConnection);
-        });
+                if (!ok && !cancelled && !err.isEmpty()) ctx.log(err);
+                ctx.progress(static_cast<qint64>(removed), static_cast<qint64>(sel.size()));
+                QMetaObject::invokeMethod(qApp, [self, ok, cancelled, err, sel, neighbour, removed]() mutable {
+                    if (!self) return;
+                    if (ok && removed == sel.size()) {
+                        if (!neighbour.empty()) self->selectPathAfterRefresh(neighbour);
+                        self->refresh();
+                        self->messageEmitted(QString("Deleted %1").arg(sel.size()));
+                    } else if (cancelled) {
+                        self->refresh();
+                        if (removed > 0) {
+                            self->messageEmitted(
+                                QString("Delete cancelled (%1 of %2 removed)")
+                                    .arg(removed).arg(sel.size()));
+                        } else {
+                            self->messageEmitted(QStringLiteral("Delete cancelled"));
+                        }
+                    } else {
+                        self->refresh();
+                        QString detail = err;
+                        if (removed > 0 || detail.isEmpty()) {
+                            if (!detail.isEmpty()) detail += QStringLiteral("\n\n");
+                            detail += QString("Removed %1 of %2 item(s).")
+                                          .arg(removed).arg(sel.size());
+                        }
+                        TuiConfirmPopup::alert(self.data(), "Delete Error", detail);
+                    }
+                }, Qt::QueuedConnection);
+            });
     }
 }
 
 void MillerViewContainer::compressSelection(const QString& format) {
+    if (m_archiveSelectionActive) return;
     if (tryPluginOverride("compress")) return;
     auto sel = selectedPaths();
     if (sel.empty()) return;
@@ -2302,24 +2905,34 @@ void MillerViewContainer::compressSelection(const QString& format) {
                                                  defaultName, &ok, QPoint(), true);
     if (ok && !archiveName.trimmed().isEmpty()) {
         std::filesystem::path dest = m_currentDir / archiveName.trimmed().toUtf8().toStdString();
-        // фон: tar/zip ждут бесконечно (waitForFinished(-1)), не фризим GUI
         emit messageEmitted("Archiving...");
         QPointer<MillerViewContainer> self(this);
-        QThreadPool::globalInstance()->start([self, sel, dest]() mutable {
-            QString err;
-            bool arcOk = Core::XdgUtils::createArchive(sel, dest, err);
-            QMetaObject::invokeMethod(qApp, [self, arcOk, err, dest]() mutable {
-                if (!self) return;
+        Core::Tasks::TaskManager::instance().submit(
+            QString("Create archive %1").arg(archiveName.trimmed()),
+            QStringLiteral("io"),
+            [self, sel, dest](Core::Tasks::TaskContext& ctx) mutable {
+                if (ctx.cancelled()) return;
+                QString err;
+                const bool arcOk = Core::XdgUtils::createArchive(sel, dest, err, ctx.cancelToken());
                 if (arcOk) {
-                    Core::UndoManager::instance().recordCreate(dest, "Archive");
-                    self->selectPathAfterRefresh(dest);
-                    self->refresh();
-                    self->messageEmitted("Archived");
-                } else {
-                    TuiConfirmPopup::alert(self.data(), "Archive Error", err);
+                    ctx.log(QStringLiteral("created %1").arg(QString::fromUtf8(dest.c_str())));
+                } else if (!ctx.cancelled() && !err.isEmpty()) {
+                    ctx.log(err);
+                    ctx.fail(err);
                 }
-            }, Qt::QueuedConnection);
-        });
+                ctx.progress(ctx.cancelled() ? 0 : 1, 1);
+                QMetaObject::invokeMethod(qApp, [self, arcOk, err, dest]() mutable {
+                    if (!self) return;
+                    if (arcOk) {
+                        Core::UndoManager::instance().recordCreate(dest, "Archive");
+                        self->selectPathAfterRefresh(dest);
+                        self->refresh();
+                        self->messageEmitted("Archived");
+                    } else {
+                        TuiConfirmPopup::alert(self.data(), "Archive Error", err);
+                    }
+                }, Qt::QueuedConnection);
+            });
     }
 }
 
@@ -2331,6 +2944,7 @@ void MillerViewContainer::extractHere() {
 }
 
 void MillerViewContainer::extractSelectionInto(const std::filesystem::path& destDir) {
+    if (m_archiveSelectionActive) return;
     auto sel = selectedPaths();
     if (sel.empty()) return;
     extractArchiveInto(sel.front(), destDir);
@@ -2346,21 +2960,33 @@ void MillerViewContainer::extractArchiveInto(const std::filesystem::path& archiv
     std::filesystem::path arc = archive;
     emit messageEmitted("Extracting...");
     QPointer<MillerViewContainer> self(this);
-    QThreadPool::globalInstance()->start([self, arc, destDir]() {
-        QString err;
-        std::filesystem::path actualDest;
-        bool exOk = Core::XdgUtils::extractArchive(arc, destDir, err, &actualDest);
-        QMetaObject::invokeMethod(qApp, [self, exOk, err, actualDest]() {
-            if (!self) return;
+    Core::Tasks::TaskManager::instance().submit(
+        QString("Extract %1").arg(QString::fromUtf8(arc.filename().c_str())),
+        QStringLiteral("io"),
+        [self, arc, destDir](Core::Tasks::TaskContext& ctx) mutable {
+            if (ctx.cancelled()) return;
+            QString err;
+            std::filesystem::path actualDest;
+            const bool exOk = Core::XdgUtils::extractArchive(arc, destDir, err, &actualDest,
+                                                             ctx.cancelToken());
             if (exOk) {
-                self->selectPathAfterRefresh(actualDest);
-                self->refresh();
-                self->messageEmitted("Extracted");
-            } else {
-                TuiConfirmPopup::alert(self.data(), "Extraction Error", err);
+                ctx.log(QStringLiteral("extracted to %1").arg(QString::fromUtf8(actualDest.c_str())));
+            } else if (!ctx.cancelled() && !err.isEmpty()) {
+                ctx.log(err);
+                ctx.fail(err);
             }
-        }, Qt::QueuedConnection);
-    });
+            ctx.progress(ctx.cancelled() ? 0 : 1, 1);
+            QMetaObject::invokeMethod(qApp, [self, exOk, err, actualDest]() {
+                if (!self) return;
+                if (exOk) {
+                    self->selectPathAfterRefresh(actualDest);
+                    self->refresh();
+                    self->messageEmitted("Extracted");
+                } else {
+                    TuiConfirmPopup::alert(self.data(), "Extraction Error", err);
+                }
+            }, Qt::QueuedConnection);
+        });
 }
 
 void MillerViewContainer::openTerminal() {
@@ -2388,23 +3014,61 @@ void MillerViewContainer::runPluginById(const QString& pluginId) {
     runPluginByIdIn(pluginId, selectedPaths(), m_currentDir);
 }
 
+void MillerViewContainer::runPluginCommand(const QString& pluginId, const QString& query) {
+    runPluginByIdIn(pluginId, selectedPaths(), m_currentDir, query, true);
+}
+
+void MillerViewContainer::beginPluginPanes(const QString& title) {
+    if (!m_pluginPanes) {
+        m_pluginPanes = new TuiPanesOverlay(this);
+        connect(m_pluginPanes, &TuiPanesOverlay::closed, this, &MillerViewContainer::focusCenter);
+    }
+    m_pluginPanes->begin(title);
+}
+
+void MillerViewContainer::appendPluginPanesOutput(const QByteArray& data) {
+    if (m_pluginPanes) m_pluginPanes->appendOutput(data);
+}
+
+void MillerViewContainer::appendPluginPaneOutput(int pane, const QByteArray& data) {
+    if (m_pluginPanes) m_pluginPanes->appendPane(pane, data);
+}
+
+void MillerViewContainer::finishPluginPanes(int exitCode) {
+    if (m_pluginPanes) m_pluginPanes->finish(exitCode);
+}
+
+void MillerViewContainer::closePluginPanes() {
+    if (m_pluginPanes) m_pluginPanes->closeOverlay();
+}
+
+bool MillerViewContainer::isPluginPanesVisible() const {
+    return m_pluginPanes && m_pluginPanes->isVisible();
+}
+
 void MillerViewContainer::runNativePluginAction(const QString& actionId) {
     NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir);
 }
 
+void MillerViewContainer::runNativePluginCommand(const QString& actionId, const QString& query) {
+    NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir, query, true);
+}
+
 void MillerViewContainer::runPluginByIdIn(const QString& pluginId,
                                           const std::vector<std::filesystem::path>& selection,
-                                          const std::filesystem::path& cwd) {
+                                          const std::filesystem::path& cwd,
+                                          const QString& query,
+                                          bool commandOutput) {
     const Core::Plugins::Plugin plugin = Core::Plugins::findById(pluginId);
     if (plugin.id.isEmpty()) return;
 
-    // плагины (манифест из *.so): in-process вызов вместо QProcess
+    // нативные плагины и прямой вызов внутри процесса вместо запуска отдельного процесса
     if (plugin.native) {
-        NativePluginHost::instance().invokeAction(plugin.action, selection, cwd);
+        NativePluginHost::instance().invokeAction(plugin.action, selection, cwd, query, commandOutput);
         return;
     }
 
-    // пустое выделение (фон): плагин работает с самим каталогом
+    // пустое выделение на фоне и плагин работает с самим каталогом
     std::vector<std::filesystem::path> targets = selection;
     if (targets.empty()) targets.push_back(cwd);
 
@@ -2414,7 +3078,7 @@ void MillerViewContainer::runPluginByIdIn(const QString& pluginId,
 
     if (plugin.detach) {
         QString err;
-        if (Core::Plugins::spawnDetached(plugin, paths, cwdQ, &err)) {
+        if (Core::Plugins::spawnDetached(plugin, paths, cwdQ, &err, query)) {
             emit messageEmitted("Plugin: " + plugin.name);
             refresh();
         } else {
@@ -2423,31 +3087,49 @@ void MillerViewContainer::runPluginByIdIn(const QString& pluginId,
         return;
     }
 
-    // оверлей вывода: один на окно (правый нижний угол), не забирает фокус
-    QWidget* host = window() ? window() : this;
-    QPointer<TuiOutputOverlay> overlay =
-        host->findChild<TuiOutputOverlay*>(QStringLiteral("tuiOutputOverlay"));
-    if (!overlay) overlay = new TuiOutputOverlay(host);
+    QPointer<TuiOutputOverlay> overlay;
+    if (!commandOutput) {
+        // оверлей вывода один на окно в правом нижнем углу и не забирает фокус
+        QWidget* host = window() ? window() : this;
+        overlay = host->findChild<TuiOutputOverlay*>(QStringLiteral("tuiOutputOverlay"));
+        if (!overlay) overlay = new TuiOutputOverlay(host);
+    }
 
     QString err;
-    QProcess* proc = Core::Plugins::spawn(plugin, paths, cwdQ, this, &err);
+    QProcess* proc = Core::Plugins::spawn(plugin, paths, cwdQ, this, &err, query);
     if (!proc) {
         TuiConfirmPopup::alert(this, "Plugin Error", err);
         return;
     }
 
-    overlay->begin(plugin.name);
+    if (commandOutput)
+        beginPluginPanes(plugin.commandTitle.isEmpty() ? plugin.name : plugin.commandTitle);
+    else if (overlay)
+        overlay->begin(plugin.name);
     emit messageEmitted("Plugin: " + plugin.name);
 
-    connect(proc, &QProcess::readyRead, overlay, [proc, overlay]() {
-        if (overlay) overlay->appendOutput(proc->readAll());
-    });
     QPointer<MillerViewContainer> self(this);
+    connect(proc, &QProcess::readyRead, this, [proc, overlay, self, commandOutput]() {
+        const QByteArray chunk = proc->readAll();
+        if (commandOutput) {
+            if (self) self->appendPluginPanesOutput(chunk);
+        } else if (overlay) {
+            overlay->appendOutput(chunk);
+        }
+    });
     const QString name = plugin.name;
     connect(proc, &QProcess::finished, this,
-            [self, overlay, name, proc](int exitCode, QProcess::ExitStatus) {
-        overlay->appendOutput(proc->readAll());
-        overlay->finish(exitCode);
+            [self, overlay, name, proc, commandOutput](int exitCode, QProcess::ExitStatus) {
+        const QByteArray tail = proc->readAll();
+        if (commandOutput) {
+            if (self) {
+                self->appendPluginPanesOutput(tail);
+                self->finishPluginPanes(exitCode);
+            }
+        } else if (overlay) {
+            overlay->appendOutput(tail);
+            overlay->finish(exitCode);
+        }
         proc->deleteLater();
         if (!self) return;
         self->refresh();
@@ -2543,6 +3225,102 @@ void MillerViewContainer::createNewFile() {
     }
 }
 
+void MillerViewContainer::createBulkItems() {
+    BulkCreateDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QStringList names = dialog.names();
+    if (names.isEmpty()) return;
+    const bool folders = dialog.folders();
+
+    std::vector<std::filesystem::path> targets;
+    QStringList conflicts;
+    targets.reserve(static_cast<size_t>(names.size()));
+    for (const QString& name : names) {
+        std::filesystem::path target = m_currentDir / toFs(name);
+        std::error_code ec;
+        if (std::filesystem::exists(target, ec)) {
+            conflicts << name;
+        } else {
+            targets.push_back(std::move(target));
+        }
+    }
+
+    if (targets.empty()) {
+        TuiConfirmPopup::alert(this, "Create Items",
+                               "All entered names already exist in this directory");
+        return;
+    }
+    if (!conflicts.isEmpty()) {
+        const QString detail = QString("%1 name(s) already exist and will be skipped:\n\n%2\n\nCreate the remaining %3 item(s)?")
+                                   .arg(conflicts.size())
+                                   .arg(conflicts.join(QStringLiteral(", ")).left(1200))
+                                   .arg(targets.size());
+        if (!TuiConfirmPopup::ask(this, "Create Items", detail, "Create", "Cancel", false)) {
+            return;
+        }
+    }
+
+    const std::filesystem::path firstTarget = targets.front();
+    QPointer<MillerViewContainer> self(this);
+    emit messageEmitted(QString("Creating %1 item(s)...").arg(targets.size()));
+    Core::Tasks::TaskManager::instance().submit(
+        QString("Create %1 item(s)").arg(targets.size()),
+        QStringLiteral("io"),
+        [self, folders, targets, firstTarget](Core::Tasks::TaskContext& ctx) {
+            std::vector<Core::UndoItem> created;
+            QStringList errors;
+            for (size_t i = 0; i < targets.size(); ++i) {
+                if (ctx.cancelled()) break;
+                const auto& target = targets[i];
+                bool ok = false;
+                std::error_code ec;
+                if (folders) {
+                    ok = std::filesystem::create_directories(target, ec);
+                } else {
+                    if (!std::filesystem::exists(target, ec)) {
+                        std::ofstream ofs(target);
+                        if (ofs.is_open()) {
+                            ofs.close();
+                            ok = true;
+                        }
+                    }
+                }
+                if (ok) {
+                    created.push_back({{}, target, {}});
+                } else {
+                    const QString message = QStringLiteral("Failed to create %1%2")
+                                                .arg(QString::fromUtf8(target.c_str()),
+                                                     ec ? QStringLiteral(": ") +
+                                                              QString::fromUtf8(ec.message().c_str())
+                                                        : QString());
+                    errors << message;
+                    ctx.log(message);
+                }
+                ctx.progress(static_cast<qint64>(i + 1), static_cast<qint64>(targets.size()));
+            }
+
+            if (!created.empty()) {
+                Core::UndoManager::instance().recordMultiCreate(created, "Bulk create");
+            }
+            const bool cancelled = ctx.cancelled();
+            const QString error = errors.join(QChar('\n'));
+            QMetaObject::invokeMethod(qApp, [self, created, cancelled, error, firstTarget]() {
+                if (!self) return;
+                if (!created.empty()) self->selectPathAfterRefresh(firstTarget);
+                self->refresh();
+                if (!error.isEmpty()) {
+                    TuiConfirmPopup::alert(self.data(), "Create Items", error.left(2000));
+                } else if (cancelled) {
+                    self->messageEmitted(
+                        QString("Create cancelled (%1 created)").arg(created.size()));
+                } else {
+                    self->messageEmitted(QString("Created %1 item(s)").arg(created.size()));
+                }
+            }, Qt::QueuedConnection);
+        });
+}
+
 void MillerViewContainer::bookmarkSelection() {
     if (tryPluginOverride("bookmark")) return;
     auto sel = selectedPaths();
@@ -2557,6 +3335,7 @@ void MillerViewContainer::bookmarkSelection() {
 }
 
 void MillerViewContainer::showProperties() {
+    if (m_archiveSelectionActive) return;
     if (tryPluginOverride("properties")) return;
     auto sel = selectedPaths();
     std::filesystem::path target = sel.empty() ? m_currentDir : sel.front();

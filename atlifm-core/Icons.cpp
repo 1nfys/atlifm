@@ -9,12 +9,12 @@ struct PresetIcon {
     const char* colorHex;
 };
 
-// глушим пресетные цвета, чтобы иконки не спорили с палитрой темы
+// глушим пресетные цвета чтобы значки не спорили с темой
 inline QColor mutedPresetColor(const QColor& c) {
     if (!c.isValid()) return c;
     float h = 0.0f, s = 0.0f, l = 0.0f;
     c.getHslF(&h, &s, &l);
-    if (s <= 0.0f) return c; // ахроматичные (серые) не трогаем
+    if (s <= 0.0f) return c; // серые цвета не трогаем
     return QColor::fromHslF(h, static_cast<float>(s * 0.65), l);
 }
 
@@ -755,7 +755,7 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
                  std::optional<bool> isExecutableHint) {
     using namespace Theme::Colors;
 
-    // 1. симлинки: глиф ссылки и бирюзовый цвет
+    // ссылка
     if (isSymlink) {
         return IconInfo{Glyph::FileSymlink, Teal()};
     }
@@ -765,14 +765,11 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
     std::transform(lowerFilename.begin(), lowerFilename.end(), lowerFilename.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    // 2. каталоги
     if (isDirectory) {
-        // sticky/tmp: жёлтая булавка
         if (lowerFilename == "tmp") {
             return IconInfo{Glyph::StickyPin, Yellow()};
         }
 
-        // таблица особых каталогов
         const auto& presetDirs = getPresetDirs();
         if (auto it = presetDirs.find(filename); it != presetDirs.end()) {
             return IconInfo{QString::fromUtf8(it->second.glyph), mutedPresetColor(QColor(it->second.colorHex))};
@@ -781,14 +778,12 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
             return IconInfo{QString::fromUtf8(it->second.glyph), mutedPresetColor(QColor(it->second.colorHex))};
         }
 
-        // запасной вариант: синий глиф папки
         if (isOpen) {
             return IconInfo{Glyph::FolderOpen, Blue()};
         }
         return IconInfo{Glyph::FolderClosed, Blue()};
     }
 
-    // 3. точное совпадение имени файла с пресетом
     const auto& presetFiles = getPresetFiles();
     if (auto it = presetFiles.find(filename); it != presetFiles.end()) {
         return IconInfo{QString::fromUtf8(it->second.glyph), QColor(it->second.colorHex)};
@@ -797,7 +792,6 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
         return IconInfo{QString::fromUtf8(it->second.glyph), QColor(it->second.colorHex)};
     }
 
-    // 4. совпадение расширения с пресетом
     std::string ext = path.extension().string();
     if (!ext.empty() && ext.front() == '.') {
         ext = ext.substr(1);
@@ -813,7 +807,7 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
         }
     }
 
-    // 5. исполняемый бинарник или скрипт shell
+    // исполняемые файлы
     if (lowerExt == "sh" || lowerExt == "bin" || lowerExt == "appimage") {
         return IconInfo{Glyph::Executable, Green()};
     }
@@ -834,7 +828,7 @@ IconInfo getIcon(const std::filesystem::path& path, bool isDirectory,
         }
     }
 
-    // 6. запасной вариант: глиф файла
+    // дефолтный файл
     return IconInfo{Glyph::FileDefault, Text()};
 }
 

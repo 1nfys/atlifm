@@ -19,15 +19,15 @@ namespace Widgets {
 class MainWindow;
 class TuiOutputOverlay;
 
-// хост нативных плагинов (atlifm-plugin-api.h, ABI v1): dlopen ~/.config/atlifm/plugins/*.so,
-// сбор регистраций и диспетчеризация, все callback'и кроме render превью в gui-потоке,
-// после initialize() реестр только читается
+// хост нативных плагинов dlopen plugins so
+// сбор регистраций и диспетчеризация все колбеки кроме render превью в gui потоке
+// после initialize реестр только читается
 class NativePluginHost : public QObject {
     Q_OBJECT
 public:
     static NativePluginHost& instance();
 
-    // общая точка входа хуков: conf-плагины (процессы) и нативные
+    // общая точка входа хуков: conf плагины процессы и нативные
     static void fireHook(const QString& event, const QStringList& paths, const QString& cwd);
 
     void initialize();
@@ -51,7 +51,9 @@ public:
     // запуск действия: сначала цепочка override других плагинов, затем собственный run
     bool invokeAction(const QString& actionId,
                       const std::vector<std::filesystem::path>& selection,
-                      const std::filesystem::path& cwd);
+                      const std::filesystem::path& cwd,
+                      const QString& query = QString(),
+                      bool commandOutput = false);
 
     bool hasPreview(const std::filesystem::path& path) const;
     // вызывается из рабочего потока: доступен только write
@@ -73,6 +75,11 @@ private:
         QStringList keys;
         QString appliesTo;
         QStringList extensions;
+        QString command;
+        QString commandMode;
+        QString commandTitle;
+        QString commandDescription;
+        QString commandPlaceholder;
         void* user{nullptr};
         int (*run)(const AtlifmInvocation*, void*) {nullptr};
         int (*enabled)(const AtlifmInvocation*, void*) {nullptr};
@@ -106,6 +113,7 @@ private:
     static const AtlifmHostApi& hostApi();
     static const char* apiVersion();
     static void apiOutputWrite(const char* text);
+    static void apiOutputWritePane(int pane, const char* text);
     static void apiNotify(const char* message);
     static int apiRunCommand(const char* commandLine, int detach);
     static void apiRefresh();
@@ -123,13 +131,19 @@ private:
     bool runOverrideChain(const QString& actionId,
                           const std::vector<std::filesystem::path>& selection,
                           const std::filesystem::path& cwd,
-                          const QString& skipPluginId);
+                          const QString& skipPluginId,
+                          const QString& query = QString(),
+                          bool commandOutput = false);
     void beginSession(const QString& title, const QString& actionId,
                       const std::vector<std::filesystem::path>& selection,
-                      const std::filesystem::path& cwd);
+                      const std::filesystem::path& cwd,
+                      const QString& query = QString(),
+                      bool commandOutput = false);
     void endSession(int result);
     void tryFinishSession();
+    void ensurePanesBegun();
     void sessionAppend(const QByteArray& data);
+    void sessionAppendPane(int pane, const QByteArray& data);
     void onSessionProcessFinished(quint64 generation);
     TuiOutputOverlay* ensureOverlay();
 
@@ -150,9 +164,12 @@ private:
     struct Session {
         bool context{false};
         bool begun{false};
+        bool commandOutput{false};
+        bool panesBegun{false};
         QString title;
         QString actionId;
         QString cwd;
+        QString query;
         QStringList selection;
         QPointer<TuiOutputOverlay> overlay;
         quint64 generation{0};

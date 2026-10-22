@@ -16,12 +16,12 @@ static TuiStatusBar* locateStatusBar(QWidget* parent) {
     if (parent) win = parent->window();
     if (!win) win = qApp ? qApp->activeWindow() : nullptr;
     if (win) {
-        if (auto* sb = win->findChild<TuiStatusBar*>()) return sb;
+        if (auto* sb = win->findChild<TuiStatusBar*>(); sb && sb->isVisible()) return sb;
     }
     if (qApp) {
         for (QWidget* w : qApp->topLevelWidgets()) {
             if (w && w->isWindow()) {
-                if (auto* sb = w->findChild<TuiStatusBar*>()) return sb;
+                if (auto* sb = w->findChild<TuiStatusBar*>(); sb && sb->isVisible()) return sb;
             }
         }
     }

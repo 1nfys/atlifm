@@ -1,16 +1,8 @@
 #pragma once
 
-// бэкенд XDG desktop portal filechooser: системные диалоги выбора файла
-// (gtk, chromium и т.п.) открывают наш tui выбор. запуск: atlifm --portal,
-// сервис активируется через dbus по запросу xdg-desktop-portal
-//
-// интеграция (файлы проекта, устанавливаются в ~/.local/share):
-//   atlifm.portal                                      -> xdg-desktop-portal/portals/
-//   org.freedesktop.impl.portal.desktop.atlifm.service -> dbus-1/services/
-//   hyprland-portals.conf                                  -> ~/.config/xdg-desktop-portal/
-//     [preferred]
-//     default=hyprland;gtk
-//     org.freedesktop.impl.portal.FileChooser=atlifm
+// бэкенд xdg desktop portal filechooser: системные диалоги выбора файла
+// открывают наш выбор файлов а сервис активируется через dbus
+// конфиги лежат в xdg desktop portal portals и dbus сервисах
 
 #include <QDBusContext>
 #include <QDBusMessage>

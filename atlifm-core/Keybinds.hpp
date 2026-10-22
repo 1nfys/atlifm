@@ -1,6 +1,6 @@
 #pragma once
 
-// бинды клавиш: таблица дефолтов + ~/.config/atlifm/keybinds.conf
+// бинды клавиш из конфига и дефолты
 
 #include <QString>
 #include <QStringList>
@@ -16,9 +16,9 @@
 namespace Core::Keybinds {
 
 struct Action {
-    QString id;          // ключ в keybinds.conf
-    QString defaults;    // дефолтные клавиши через запятую
-    QString section;     // секция в читшите f1
+    QString id;          // ключ в конфиге
+    QString defaults;    // дефолтные клавиши
+    QString section;     // секция в читшите
     QString label;       // описание
     bool alwaysActive;   // работает даже в текстовых полях
 };
@@ -34,20 +34,27 @@ inline const std::vector<Action>& actionTable() {
             {"pin_tab",          "Ctrl+P",                    "TABS", "Pin / unpin active tab", false},
             {"next_tab",         "Ctrl+Tab, Ctrl+PgDown",     "TABS", "Next tab", false},
             {"prev_tab",         "Ctrl+Shift+Tab, Ctrl+PgUp", "TABS", "Previous tab", false},
+            {"open_in_new_tab",  "Ctrl+Return, Ctrl+Enter",   "TABS", "Open selected folder in new tab", false},
             // навигация и сортировка
             {"focus_path",       "Ctrl+L, Alt+D, F4",         "NAVIGATION & SORTING", "Focus address / path input", true},
             {"parent_dir",       "Alt+Up",                    "NAVIGATION & SORTING", "Parent folder", false},
             {"go_back",          "Alt+Left",                  "NAVIGATION & SORTING", "History back", false},
             {"go_forward",       "Alt+Right",                 "NAVIGATION & SORTING", "History forward", false},
             {"go_home",          "Alt+Home",                  "NAVIGATION & SORTING", "Go to Home directory", false},
-            {"quick_jump",       "g",                         "NAVIGATION & SORTING", "Quick Jump menu", false},
+            {"first_item",       "Home",                      "NAVIGATION & SORTING", "Go to first item", false},
+            {"last_item",        "End",                       "NAVIGATION & SORTING", "Go to last item", false},
+            {"quick_jump",       "Alt+Space",                 "NAVIGATION & SORTING", "Quick Jump menu", false},
             {"toggle_bookmarks", "Ctrl+B, Ctrl+\\, F9",       "NAVIGATION & SORTING", "Toggle bookmarks sidebar", false},
             {"toggle_hidden",    "Ctrl+H, Ctrl+.",            "NAVIGATION & SORTING", "Show / hide hidden files", false},
             {"refresh",          "Ctrl+R, F5",                "NAVIGATION & SORTING", "Refresh directory", false},
+            {"tasks",            "Alt+W",                     "NAVIGATION & SORTING", "Background tasks (progress / cancel / log)", false},
             {"sort_name",        "Alt+1",                     "NAVIGATION & SORTING", "Sort by Name", false},
             {"sort_size",        "Alt+2",                     "NAVIGATION & SORTING", "Sort by Size", false},
             {"sort_date",        "Alt+3",                     "NAVIGATION & SORTING", "Sort by Date", false},
             {"sort_type",        "Alt+4",                     "NAVIGATION & SORTING", "Sort by Type", false},
+            // раскладка сохраняет панели или сбрасывает на дефолт
+            {"save_layout",      "Ctrl+Shift+S",              "LAYOUT", "Save current layout", false},
+            {"reset_layout",     "Ctrl+Shift+R",              "LAYOUT", "Reset layout to theme.conf defaults", false},
             // файловые операции
             {"cut",              "Ctrl+X",                    "FILE OPERATIONS", "Cut selection", false},
             {"copy",             "Ctrl+C",                    "FILE OPERATIONS", "Copy selection", false},
@@ -63,6 +70,7 @@ inline const std::vector<Action>& actionTable() {
             {"delete_perm",      "Shift+Del",                 "FILE OPERATIONS", "Delete permanently", false},
             {"new_folder",       "Ctrl+Shift+N",              "FILE OPERATIONS", "Create new folder", false},
             {"new_file",         "Ctrl+N, Ctrl+Alt+N",        "FILE OPERATIONS", "Create new file", false},
+            {"create_bulk",      "Ctrl+Shift+A",              "FILE OPERATIONS", "Create multiple files / folders", false},
             {"properties",       "Alt+Return, Alt+Enter",     "FILE OPERATIONS", "Properties (compact overlay)", false},
             // поиск и фильтр
             {"filter",           "Ctrl+F",                    "SEARCH & FILTER", "Open fuzzy filter bar", true},
@@ -81,7 +89,7 @@ inline const std::vector<Action>& actionTable() {
                 false,
             });
         }
-        // строго внутри секции TABS (между prev_tab и focus_path)
+        // вкладки с первой по девятую
         t.insert(t.begin() + 6, tabs.begin(), tabs.end());
         return t;
     }();
@@ -101,7 +109,7 @@ inline QString configPath() {
     return dir.isEmpty() ? QString() : dir + "/keybinds.conf";
 }
 
-// алиасы названий клавиш, т.к. Qt их не разбирает
+// алиасы клавиш для qt
 inline QString normalizeKeySpec(QString spec) {
     spec = spec.trimmed();
     static const QHash<QString, QString> aliases = {
@@ -119,7 +127,7 @@ inline QStringList parseKeys(const QString& spec) {
     for (const QString& raw : parts) {
         const QString norm = normalizeKeySpec(raw);
         if (norm.isEmpty()) continue;
-        // qt парсит мусор в пустые последовательности, берём только валидный portable text
+        // берем только валидные последовательности
         const QString canonical = QKeySequence::fromString(norm)
                                       .toString(QKeySequence::PortableText);
         if (canonical.isEmpty()) continue;
@@ -133,7 +141,7 @@ inline QHash<QString, QStringList>& cache() {
     return c;
 }
 
-// кастомные действия из плагинов (коллизии с дефолтными и дубли выкидываем)
+// действия из плагинов без дублей
 inline QHash<QString, QString> acceptedPluginActions() {
     QHash<QString, QString> out;
     for (const Core::Plugins::Plugin& p : Core::Plugins::load()) {
@@ -154,7 +162,7 @@ inline const QHash<QString, QStringList>& loaded() {
     for (const Action& a : actionTable())
         c.insert(a.id, parseKeys(a.defaults));
 
-    // подмешиваем дефолты плагинов перед чтением конфига
+    // подмешиваем дефолты плагинов
     for (const Core::Plugins::Plugin& p : Core::Plugins::load()) {
         if (p.action.isEmpty() || c.contains(p.action)) continue;
         QStringList defaults;
@@ -172,8 +180,8 @@ inline const QHash<QString, QStringList>& loaded() {
             if (eq <= 0) continue;
             const QString id = line.left(eq).trimmed();
             const QString val = line.mid(eq + 1).trimmed();
-            if (!c.contains(id)) continue; // неизвестные действия игнорируем
-            c.insert(id, parseKeys(val));  // пусто = отключено
+            if (!c.contains(id)) continue; // неизвестные действия пропускаем
+            c.insert(id, parseKeys(val));  // пусто значит отключено
         }
     }
     return c;
@@ -183,7 +191,23 @@ inline QStringList keysFor(const QString& actionId) {
     return loaded().value(actionId);
 }
 
-// дефолтные клавиши действия (для сброса в читшите)
+// поиск конфликтов для читшита и сохранения
+inline QString conflictForAction(const QString& actionId, const QString& key) {
+    const QString canonical = QKeySequence(key).toString(QKeySequence::PortableText);
+    if (canonical.isEmpty()) return {};
+    for (const Action& action : actionTable()) {
+        if (action.id == actionId) continue;
+        if (keysFor(action.id).contains(canonical)) return action.id;
+    }
+    const auto pluginActions = acceptedPluginActions();
+    for (auto it = pluginActions.constBegin(); it != pluginActions.constEnd(); ++it) {
+        if (it.key() == actionId) continue;
+        if (keysFor(it.key()).contains(canonical)) return it.key();
+    }
+    return {};
+}
+
+// дефолтные клавиши для сброса
 inline QStringList defaultKeysFor(const QString& actionId) {
     for (const Action& a : actionTable())
         if (a.id == actionId) return parseKeys(a.defaults);
@@ -196,10 +220,14 @@ inline QStringList defaultKeysFor(const QString& actionId) {
     return {};
 }
 
-// перезапись бинда в конфиге прямо из читшита f1
+// запись бинда в конфиг из читшита
 inline bool saveUserBinding(const QString& actionId, const QStringList& keys) {
     const QString path = configPath();
     if (path.isEmpty() || actionId.isEmpty()) return false;
+    // при конфликте не пишем чтобы не вешать два обработчика на одну кнопку
+    for (const QString& key : keys) {
+        if (!conflictForAction(actionId, key).isEmpty()) return false;
+    }
     QDir().mkpath(QFileInfo(path).absolutePath());
 
     QStringList lines;
@@ -233,12 +261,12 @@ inline bool saveUserBinding(const QString& actionId, const QStringList& keys) {
     return true;
 }
 
-// сброс к дефолту: строка действия удаляется из конфига, остальные строки сохраняются
+// сброс к дефолту удаляет строку из конфига
 inline bool resetUserBinding(const QString& actionId) {
     const QString path = configPath();
     if (path.isEmpty() || actionId.isEmpty()) return false;
     QFile in(path);
-    if (!in.open(QIODevice::ReadOnly | QIODevice::Text)) return true; // файла нет уже дефолт
+    if (!in.open(QIODevice::ReadOnly | QIODevice::Text)) return true; // если файла нет то уже дефолт
 
     QStringList lines;
     {
@@ -267,7 +295,7 @@ inline bool isAlwaysActive(const QString& actionId) {
     return false;
 }
 
-// сброс кэша (тесты: перечитать конфиг после смены ATLIFM_CONFIG_DIR)
+// сброс кэша биндов
 inline void reload() {
     cache().clear();
 }

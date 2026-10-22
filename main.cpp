@@ -16,17 +16,23 @@
 
 int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName("atlifm");
-    QCoreApplication::setApplicationVersion("1.0.0");
+    QCoreApplication::setApplicationVersion("1.0.1");
     QCoreApplication::setOrganizationName("atlifm");
 
+    // омархи ставит gtk тему глобально а мы рисуем все через fusion и свою палитру
+    // так что лишняя память не тратится если только явно не попросили через переменную
+    if (!qEnvironmentVariableIsSet("ATLIFM_GTK_THEME")) {
+        qputenv("QT_QPA_PLATFORMTHEME", QByteArray());
+    }
+
     QApplication app(argc, argv);
-    // иконка для wayland/x11 окон и доков
+    // значок окна для wayland и иксов
     app.setWindowIcon(QIcon(QStringLiteral(":/atlifm.png")));
     qAddPostRoutine(Core::XdgUtils::cleanupSudoSession);
 
     app.setStyle(QStyleFactory::create("Fusion"));
 
-    // создаем дефолтные конфиги если их еще нет в ~/.config/atlifm
+    // дефолтный конфиг если первый запуск
     Core::UserConfig::ensureDefaultConfigs();
 
     Theme::reloadPalette();
@@ -47,7 +53,7 @@ int main(int argc, char* argv[]) {
     QFont appFont = Theme::getMonospaceFont(10);
     app.setFont(appFont);
 
-    // отключаем все анимации qt, т.к. они лагают
+    // вырубаем анимации потому что в qt они лагают
     app.setEffectEnabled(Qt::UI_AnimateMenu, false);
     app.setEffectEnabled(Qt::UI_FadeMenu, false);
     app.setEffectEnabled(Qt::UI_AnimateCombo, false);
@@ -74,7 +80,7 @@ int main(int argc, char* argv[]) {
 
     parser.process(app);
 
-    // сервис портала xdg-desktop-portal (отдельный app-id чтобы hyprland флоатил диалог)
+    // портал xdg и отдельное имя чтобы hyprland открывал окно во флоате
         if (parser.isSet(setupPortalOption)) {
         if (Portal::PortalService::setupPortalEnvironment()) {
             QTextStream(stdout) << QStringLiteral("atlifm portal configured as default file chooser successfully.\n");
@@ -94,7 +100,7 @@ int main(int argc, char* argv[]) {
     const QStringList args = parser.positionalArguments();
     std::filesystem::path initialPath;
 
-    // app-id для правил wm
+    // имя окна для правил wm
     QGuiApplication::setDesktopFileName(QStringLiteral("atlifm"));
 
     if (!args.isEmpty()) {
@@ -105,7 +111,7 @@ int main(int argc, char* argv[]) {
         std::string p = arg.toUtf8().toStdString();
         std::error_code ec;
         if (std::filesystem::exists(p, ec)) {
-            // если открываем файл, перейдем в его папку и сфокусируем его
+            // если передан файл то прыгаем в его каталог и выбираем его
             initialPath = std::filesystem::canonical(p, ec);
         }
     }

@@ -1,8 +1,8 @@
 # atlifm packaging
 
-packaging for atlifm 1.0.0 for the mainstream standalone package managers, plus local build scripts that produce real artifacts
+packaging for atlifm 1.0.1 for the mainstream standalone package managers, plus local build scripts that produce real artifacts
 
-everything builds from the source tree in this repository: the fixes below are applied in place, no archives are stored and no patch files are used. toolchains that want an archive get one from `scripts/make-src-tarball.sh`, which recreates `atlifm-1.0.0-fixed.tar.gz` (top-level directory `atlifm-1.0.0/`, project files only) in the repository's `dist/`:
+everything builds from the source tree in this repository: the fixes below are applied in place, no archives are stored and no patch files are used. toolchains that want an archive get one from `scripts/make-src-tarball.sh`, which recreates `atlifm-1.0.1-fixed.tar.gz` (top-level directory `atlifm-1.0.1/`, project files only) in the repository's `dist/`:
 
 ```sh
 sh scripts/make-src-tarball.sh
@@ -25,7 +25,7 @@ verified byte-for-byte against the upstream tag) with the fixes applied
 | `scripts/` | local artifact builders | `make-src-tarball.sh`, `build-deb.sh`, `build-rpm.sh`, `build-appimage.sh` | local only |
 | `common/` | shared assets: `.desktop`, AppStream metainfo, man page | | |
 
-recipes that reference a local archive need it generated first: run `sh scripts/make-src-tarball.sh . arch` (or `... . alpine`) to drop `atlifm-1.0.0-fixed.tar.gz` next to the recipe. the archive checksum is `SKIP` in the `PKGBUILD`; for the `APKBUILD` refresh it once with `abuild checksum`. the CI workflow does all of this automatically.
+recipes that reference a local archive need it generated first: run `sh scripts/make-src-tarball.sh . arch` (or `... . alpine`) to drop `atlifm-1.0.1-fixed.tar.gz` next to the recipe. the archive checksum is `SKIP` in the `PKGBUILD`; for the `APKBUILD` refresh it once with `abuild checksum`. the CI workflow does all of this automatically.
 
 ## fixes applied to the source
 
@@ -39,9 +39,9 @@ two upstream issues are fixed directly in the source (no patch files anywhere in
 all scripts accept a source directory or tarball as the first argument and an output directory as the second (defaults: the repository root and `dist/`); directory sources are packed on the fly with `scripts/make-src-tarball.sh`, and sources without the two fixes are refused.
 
 ```sh
-sh scripts/build-deb.sh       # -> dist/atlifm_1.0.0-1_<arch>.deb
-sh scripts/build-rpm.sh       # -> dist/atlifm-1.0.0-1.<arch>.rpm (+ .src.rpm)
-sh scripts/build-appimage.sh  # -> dist/atlifm-1.0.0-<arch>.AppImage
+sh scripts/build-deb.sh       # -> dist/atlifm_1.0.1-1_<arch>.deb
+sh scripts/build-rpm.sh       # -> dist/atlifm-1.0.1-1.<arch>.rpm (+ .src.rpm)
+sh scripts/build-appimage.sh  # -> dist/atlifm-1.0.1-<arch>.AppImage
 ```
 
 `build-deb.sh` works **without debhelper** (plain `dpkg-deb`); `build-rpm.sh` works without a matching RPM dependency database (it retries with `--nodeps`) and without the `%cmake` macros (portable fallback in the spec).
@@ -49,17 +49,17 @@ sh scripts/build-appimage.sh  # -> dist/atlifm-1.0.0-<arch>.AppImage
 installing what you built:
 
 ```sh
-sudo apt install ./dist/atlifm_1.0.0-1_<arch>.deb         # Debian/Ubuntu
-sudo dnf install ./dist/atlifm-1.0.0-1.<arch>.rpm         # Fedora/RHEL, or zypper in
-sudo pacman -U dist/atlifm-1.0.0-1-<arch>.pkg.tar.zst     # Arch (from makepkg)
-sudo apk add --allow-untrusted dist/atlifm-1.0.0-r0.apk   # Alpine (from abuild)
-chmod +x dist/atlifm-1.0.0-<arch>.AppImage && dist/atlifm-1.0.0-<arch>.AppImage
+sudo apt install ./dist/atlifm_1.0.1-1_<arch>.deb         # Debian/Ubuntu
+sudo dnf install ./dist/atlifm-1.0.1-1.<arch>.rpm         # Fedora/RHEL, or zypper in
+sudo pacman -U dist/atlifm-1.0.1-1-<arch>.pkg.tar.zst     # Arch (from makepkg)
+sudo apk add --allow-untrusted dist/atlifm-1.0.1-r0.apk   # Alpine (from abuild)
+chmod +x dist/atlifm-1.0.1-<arch>.AppImage && dist/atlifm-1.0.1-<arch>.AppImage
 ```
 
 for the canonical, distro-native flows:
 
 ```sh
-# Debian/Ubuntu (<srcdir> = extracted dist/atlifm-1.0.0-fixed.tar.gz)
+# Debian/Ubuntu (<srcdir> = extracted dist/atlifm-1.0.1-fixed.tar.gz)
 cp -r packaging/debian <srcdir>/debian
 cd <srcdir> && dpkg-buildpackage -b -us -uc
 
@@ -165,7 +165,7 @@ how to use it:
 1. push this tree to a GitHub repository (public or private);
 2. **Actions → “Build packages” → “Run workflow”**: all jobs run in
    parallel and every artifact is attached to the workflow run;
-3. or push a tag such as `v1.0.0`, and the same run additionally creates a
+3. or push a tag such as `v1.0.1`, and the same run additionally creates a
    GitHub Release with every artifact attached.
 
 notes:

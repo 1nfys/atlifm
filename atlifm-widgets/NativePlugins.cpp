@@ -17,21 +17,24 @@ QByteArray utf8(const std::filesystem::path& p) {
     return QString::fromUtf8(p.c_str()).toUtf8();
 }
 
-// хранилище C-строк вызова, живёт на стеке до конца callback'а
+// хранилище си строк вызова живет на стеке до конца колбека
 struct InvocationStorage {
     QByteArray event;
     QByteArray action;
     QByteArray cwd;
+    QByteArray query;
     std::vector<QByteArray> selection;
     std::vector<const char*> selectionPtrs;
     AtlifmInvocation inv;
 
     InvocationStorage(const QString& eventName, const QString& actionId,
                       const std::filesystem::path& cwdPath,
-                      const std::vector<std::filesystem::path>& paths) {
+                      const std::vector<std::filesystem::path>& paths,
+                      const QString& queryText = QString()) {
         event = eventName.toUtf8();
         action = actionId.toUtf8();
         cwd = utf8(cwdPath);
+        query = queryText.toUtf8();
         selection.reserve(paths.size());
         for (const auto& p : paths) selection.push_back(utf8(p));
         selectionPtrs.reserve(selection.size());
@@ -42,6 +45,7 @@ struct InvocationStorage {
         inv.cwd = cwd.constData();
         inv.selection = selectionPtrs.empty() ? nullptr : selectionPtrs.data();
         inv.selection_count = selectionPtrs.size();
+        inv.query = queryText.isEmpty() ? nullptr : query.constData();
     }
 };
 
@@ -79,6 +83,7 @@ const AtlifmHostApi& NativePluginHost::hostApi() {
         &NativePluginHost::apiRegisterPreview,
         &NativePluginHost::apiRegisterHook,
         &NativePluginHost::apiLog,
+        &NativePluginHost::apiOutputWritePane,
     };
     return table;
 }
@@ -180,6 +185,11 @@ std::vector<Core::Plugins::Plugin> NativePluginHost::manifests() const {
         p.keys = a.keys;
         p.appliesTo = a.appliesTo;
         p.extensions = a.extensions;
+        p.command = a.command;
+        p.commandMode = a.commandMode;
+        p.commandTitle = a.commandTitle;
+        p.commandDescription = a.commandDescription;
+        p.commandPlaceholder = a.commandPlaceholder;
         p.sourceFile = a.pluginId + QStringLiteral(".so");
         out.push_back(std::move(p));
     }
@@ -225,7 +235,7 @@ bool NativePluginHost::recordApplies(const QString& appliesTo,
                                      const QStringList& extensions,
                                      const std::vector<std::filesystem::path>& selection) const {
     if (selection.empty()) {
-        // фон каталога: как conf-плагин, применяется только к каталогу
+        // фон каталога: как conf плагин применяется только к каталогу
         if (appliesTo == QLatin1String("files")) return false;
         if (!extensions.isEmpty()) return false;
         return true;
@@ -268,15 +278,17 @@ bool NativePluginHost::tryOverride(const QString& actionId,
 bool NativePluginHost::runOverrideChain(const QString& actionId,
                                         const std::vector<std::filesystem::path>& selection,
                                         const std::filesystem::path& cwd,
-                                        const QString& skipPluginId) {
+                                        const QString& skipPluginId,
+                                        const QString& query,
+                                        bool commandOutput) {
     const QString id = actionId.trimmed().toLower();
     if (!Core::Plugins::isValidActionId(id) || Core::Plugins::isProtectedActionId(id))
         return false;
     for (const OverrideRecord& rec : m_overrides) {
         if (rec.actionId != id || !rec.run) continue;
         if (!skipPluginId.isEmpty() && rec.pluginId == skipPluginId) continue;
-        beginSession(pluginDisplayName(rec.pluginId), id, selection, cwd);
-        InvocationStorage st(QString(), id, cwd, selection);
+        beginSession(pluginDisplayName(rec.pluginId), id, selection, cwd, query, commandOutput);
+        InvocationStorage st(QString(), id, cwd, selection, query);
         m_activePlugin = rec.pluginId;
         const int handled = rec.run(&st.inv, rec.user);
         m_activePlugin.clear();
@@ -288,17 +300,19 @@ bool NativePluginHost::runOverrideChain(const QString& actionId,
 
 bool NativePluginHost::invokeAction(const QString& actionId,
                                     const std::vector<std::filesystem::path>& selection,
-                                    const std::filesystem::path& cwd) {
+                                    const std::filesystem::path& cwd,
+                                    const QString& query,
+                                    bool commandOutput) {
     const ActionRecord* act = nullptr;
     for (const ActionRecord& a : m_actions)
         if (a.actionId == actionId) { act = &a; break; }
     if (!act) return false;
 
     // действие плагина тоже перехватываемо другими плагинами
-    if (runOverrideChain(actionId, selection, cwd, act->pluginId)) return true;
+    if (runOverrideChain(actionId, selection, cwd, act->pluginId, query, commandOutput)) return true;
 
-    beginSession(act->name, actionId, selection, cwd);
-    InvocationStorage st(QString(), actionId, cwd, selection);
+    beginSession(act->name, actionId, selection, cwd, query, commandOutput);
+    InvocationStorage st(QString(), actionId, cwd, selection, query);
     m_activePlugin = act->pluginId;
     const int rc = act->run ? act->run(&st.inv, act->user) : 1;
     m_activePlugin.clear();
@@ -362,12 +376,17 @@ TuiOutputOverlay* NativePluginHost::ensureOverlay() {
 
 void NativePluginHost::beginSession(const QString& title, const QString& actionId,
                                     const std::vector<std::filesystem::path>& selection,
-                                    const std::filesystem::path& cwd) {
+                                    const std::filesystem::path& cwd,
+                                    const QString& query,
+                                    bool commandOutput) {
     m_session.context = true;
     m_session.begun = false;
+    m_session.commandOutput = commandOutput;
+    m_session.panesBegun = false;
     m_session.title = title;
     m_session.actionId = actionId;
     m_session.cwd = QString::fromUtf8(cwd.c_str());
+    m_session.query = query;
     m_session.selection.clear();
     for (const auto& p : selection) m_session.selection.append(QString::fromUtf8(p.c_str()));
     m_session.overlay = nullptr;
@@ -375,6 +394,7 @@ void NativePluginHost::beginSession(const QString& title, const QString& actionI
     m_session.runReturned = false;
     m_session.runResult = 0;
     ++m_session.generation;
+    if (m_session.commandOutput) ensurePanesBegun();
 }
 
 void NativePluginHost::endSession(int result) {
@@ -385,16 +405,33 @@ void NativePluginHost::endSession(int result) {
     tryFinishSession();
 }
 
+void NativePluginHost::ensurePanesBegun() {
+    if (!m_session.context || !m_session.commandOutput || m_session.panesBegun) return;
+    if (!m_window) return;
+    m_window->beginPluginPanes(m_session.title);
+    m_session.panesBegun = true;
+}
+
 void NativePluginHost::tryFinishSession() {
     if (m_session.context || !m_session.runReturned || m_session.pending > 0) return;
-    if (m_session.begun && m_session.overlay) m_session.overlay->finish(m_session.runResult);
+    if (m_session.commandOutput) {
+        if (m_session.panesBegun && m_window) m_window->finishPluginPanes(m_session.runResult);
+    } else if (m_session.begun && m_session.overlay) {
+        m_session.overlay->finish(m_session.runResult);
+    }
     m_session.begun = false;
+    m_session.panesBegun = false;
     m_session.overlay = nullptr;
     m_session.selection.clear();
 }
 
 void NativePluginHost::sessionAppend(const QByteArray& data) {
     if (!m_session.context || data.isEmpty()) return;
+    if (m_session.commandOutput) {
+        ensurePanesBegun();
+        if (m_window) m_window->appendPluginPanesOutput(data);
+        return;
+    }
     if (!m_session.begun) {
         TuiOutputOverlay* ov = ensureOverlay();
         if (ov) {
@@ -407,6 +444,14 @@ void NativePluginHost::sessionAppend(const QByteArray& data) {
     if (m_session.overlay) m_session.overlay->appendOutput(data);
 }
 
+void NativePluginHost::sessionAppendPane(int pane, const QByteArray& data) {
+    if (!m_session.context || data.isEmpty() || pane < 0 || pane > 2) return;
+    // явная запись в панель переключает вывод в режим трех панелей
+    m_session.commandOutput = true;
+    ensurePanesBegun();
+    if (m_window) m_window->appendPluginPaneOutput(pane, data);
+}
+
 void NativePluginHost::onSessionProcessFinished(quint64 generation) {
     if (m_session.generation != generation) return;
     if (m_session.pending > 0) --m_session.pending;
@@ -416,12 +461,17 @@ void NativePluginHost::onSessionProcessFinished(quint64 generation) {
 // C ABI
 
 const char* NativePluginHost::apiVersion() {
-    return "1.0.0";
+    return "1.0.1";
 }
 
 void NativePluginHost::apiOutputWrite(const char* text) {
     if (!text) return;
     instance().sessionAppend(QByteArray(text));
+}
+
+void NativePluginHost::apiOutputWritePane(int pane, const char* text) {
+    if (!text) return;
+    instance().sessionAppendPane(pane, QByteArray(text));
 }
 
 void NativePluginHost::apiNotify(const char* message) {
@@ -451,7 +501,7 @@ int NativePluginHost::apiRunCommand(const char* commandLine, int detach) {
     if (!self.m_session.context) return -1;
 
     QString err;
-    QProcess* p = Core::Plugins::spawn(proc, paths, cwd, &self, &err);
+    QProcess* p = Core::Plugins::spawn(proc, paths, cwd, &self, &err, self.m_session.query);
     if (!p) {
         self.sessionAppend("error: " + err.toUtf8() + "\n");
         return -1;
@@ -498,6 +548,34 @@ int NativePluginHost::apiRegisterAction(const AtlifmActionDesc* desc) {
     rec.appliesTo = (applies == QLatin1String("files") || applies == QLatin1String("dirs"))
                         ? applies : QStringLiteral("any");
     rec.extensions = normalizeExtensions(desc->extensions);
+    if (desc->struct_size >= offsetof(AtlifmActionDesc, command) + sizeof(const char*)) {
+        rec.command = desc->command ? QString::fromUtf8(desc->command).trimmed().toLower()
+                                    : QString();
+    }
+    if (desc->struct_size >= offsetof(AtlifmActionDesc, command_mode) + sizeof(const char*)) {
+        rec.commandMode = desc->command_mode ? QString::fromUtf8(desc->command_mode).trimmed().toLower()
+                                             : QString();
+    }
+    if (desc->struct_size >= offsetof(AtlifmActionDesc, command_title) + sizeof(const char*)) {
+        rec.commandTitle = desc->command_title ? QString::fromUtf8(desc->command_title) : QString();
+    }
+    if (desc->struct_size >= offsetof(AtlifmActionDesc, command_description) + sizeof(const char*)) {
+        rec.commandDescription = desc->command_description
+            ? QString::fromUtf8(desc->command_description)
+            : QString();
+    }
+    if (desc->struct_size >= offsetof(AtlifmActionDesc, command_placeholder) + sizeof(const char*)) {
+        rec.commandPlaceholder = desc->command_placeholder
+            ? QString::fromUtf8(desc->command_placeholder)
+            : QString();
+    }
+    if (!rec.command.isEmpty()) {
+        if (!Core::Plugins::isValidCommandToken(rec.command) ||
+            rec.command == QLatin1String("fd") || rec.command == QLatin1String("rg")) {
+            rec.command.clear();
+        }
+    }
+    if (rec.commandMode != QLatin1String("query")) rec.commandMode = QStringLiteral("action");
     rec.user = desc->user;
     rec.run = desc->run;
     rec.enabled = desc->enabled;

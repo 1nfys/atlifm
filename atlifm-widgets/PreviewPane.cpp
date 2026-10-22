@@ -7,8 +7,12 @@
 #include "TuiInputPopup.hpp"
 #include "../atlifm-theme/Theme.hpp"
 #include "../atlifm-core/XdgUtils.hpp"
+#include "../atlifm-core/tasks/TaskManager.hpp"
 #include "../atlifm-core/Icons.hpp"
+#include "../atlifm-core/SearchUtils.hpp"
+#include "../atlifm-core/Thumbnails.hpp"
 #include "../atlifm-models/ArchiveModel.hpp"
+#include "ArchiveTreeWidget.hpp"
 #include "../atlifm-dnd/DragDropHandler.hpp"
 #include <QDialog>
 #include <QVBoxLayout>
@@ -20,16 +24,22 @@
 #include <QPixmap>
 #include <QImageReader>
 #include <sys/stat.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QApplication>
 #include <QClipboard>
 #include <QThreadPool>
+#include <QTimer>
 #include <QPointer>
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QPushButton>
 #include <QFrame>
 #include <QGridLayout>
@@ -41,6 +51,7 @@
 #include <QCryptographicHash>
 #include <QStandardPaths>
 #include <algorithm>
+#include <cstddef>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
@@ -49,6 +60,40 @@
 
 
 namespace Widgets {
+
+namespace {
+// Превью декодируется не в полном разрешении: панель всё равно показывает
+// несколько сотен пикселей а оригинал высокого разрешения занимает десятки мегабайт
+// Оригинал подгружается фоном только когда пользователь зумит в изображение.
+constexpr int kPreviewMaxSide = 1280;
+constexpr int kFullResMaxSide = 4096;
+constexpr qint64 kImageCacheBudgetBytes = 16LL * 1024 * 1024;
+constexpr int kImageCacheMaxEntries = 4;
+constexpr qint64 kScaledPixmapBudgetBytes = 16LL * 1024 * 1024;
+// ширина рендера страницы PDF: панель превью заметно уже, а каждый лишний
+// пиксель страницы стоит памяти и времени рендера
+constexpr int kPdfPageRenderWidth = 720;
+// полноразмерные кадры нужны только последним страницам (пересчёт при
+// изменении ширины панели), остальным достаточно pixmap в QLabel
+constexpr std::size_t kMaxCachedPdfPageImages = 2;
+// оригинал подгружается когда уменьшенное превью начинают растягивать
+// выше его собственных пикселей с небольшим запасом
+constexpr double kFullResTriggerScale = 0.9;
+
+QSize boundedSize(const QSize& size, int maxSide) {
+    if (!size.isValid() || size.isEmpty()) return size;
+    if (size.width() <= maxSide && size.height() <= maxSide) return size;
+    return size.scaled(maxSide, maxSide, Qt::KeepAspectRatio);
+}
+
+// glibc оставляет освобождённые крупные декоды в арене: после фото 6000x4000
+// это ~20 МБ rss навсегда, поэтому отдаём свободные страницы ядру сразу
+void releaseDecodeBuffers() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
+}
 
 // встроенный редактор кода с номерами строк
 
@@ -356,10 +401,24 @@ public:
         : QWidget(parent) {
         setMouseTracking(true);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        // не начинаем тяжелую догрузку оригинала на каждом колесе а ждем
+        // пока пользователь закончит жест.
+        m_fullResTimer.setSingleShot(true);
+        m_fullResTimer.setInterval(120);
+        connect(&m_fullResTimer, &QTimer::timeout, this, [this]() {
+            startFullResolutionLoad();
+        });
     }
 
-    void setImage(const QImage& img, const QString& baseInfo, const std::filesystem::path& filePath = {}) {
+    void setImage(const QImage& img, const QSize& originalSize, const QString& baseInfo,
+                  const std::filesystem::path& filePath = {}) {
         bool sameFileAndSize = (m_filePath == filePath && !m_image.isNull() && m_image.size() == img.size());
+        m_fullResTimer.stop();
+        ++m_fullResRequest; // отменяем незавершённую догрузку другого файла
+        m_fullResRequested = false;
+        m_originalSize = (originalSize.isValid() && !originalSize.isEmpty()) ? originalSize : img.size();
+        m_isPreviewScaled = m_originalSize.width() > img.width() ||
+                            m_originalSize.height() > img.height();
         m_image = img;
         m_scaledPixmap = QPixmap();
         m_scaledTargetSize = QSize();
@@ -377,11 +436,16 @@ public:
     }
 
     void clear() {
+        m_fullResTimer.stop();
+        ++m_fullResRequest;
         m_image = QImage();
         m_scaledPixmap = QPixmap();
         m_scaledTargetSize = QSize();
         m_baseInfo.clear();
         m_filePath.clear();
+        m_originalSize = QSize();
+        m_isPreviewScaled = false;
+        m_fullResRequested = false;
         m_isInitialFit = true;
         update();
     }
@@ -390,16 +454,26 @@ public:
         if (m_image.isNull() || width() <= 0 || height() <= 0) return;
         double sx = static_cast<double>(width()) / m_image.width();
         double sy = static_cast<double>(height()) / m_image.height();
-        m_scale = std::min(sx, sy);
-        if (m_scale > 1.0) m_scale = 1.0; // мелкие иконки по умолчанию не растягиваем выше 100%
+        // Уменьшенное превью можно растягивать до размера оригинала, но не
+        // выше: мелкие картинки по прежнему не увеличиваем больше ста процентов
+        double maxScale = 1.0;
+        if (m_isPreviewScaled && !m_originalSize.isEmpty()) {
+            maxScale = std::max(1.0, double(m_originalSize.width()) / m_image.width());
+        }
+        m_scale = std::min({sx, sy, maxScale});
         m_pan = QPointF((width() - m_image.width() * m_scale) / 2.0,
                         (height() - m_image.height() * m_scale) / 2.0);
         emit zoomChanged(currentZoomText());
+        maybeRequestFullResolution();
     }
 
     QString currentZoomText() const {
-        if (m_image.isNull()) return "";
-        int pct = qRound(m_scale * 100.0);
+        if (m_image.isNull() || m_originalSize.isEmpty()) return "";
+        // Процент считаем относительно исходника, а не уменьшенного превью,
+        // иначе он скачет в момент подгрузки оригинала
+        const double effectiveScale = m_scale * double(m_image.width()) /
+                                      double(m_originalSize.width());
+        int pct = qRound(effectiveScale * 100.0);
         return QString("%1 \u2022 Zoom: %2%").arg(m_baseInfo).arg(pct);
     }
 
@@ -427,7 +501,10 @@ protected:
                           std::max(1, qRound(m_image.height() * m_scale)) );
         QRectF targetRect(m_pan.x(), m_pan.y(), targetSize.width(), targetSize.height());
 
-        if (m_scale <= 2.0) {
+        // Кэшированный pixmap ускоряет отрисовку, но на большом зуме он сам
+        // может занять десятки мегабайт. Выше лимита рисуем напрямую из QImage.
+        const qint64 pixmapBytes = qint64(targetSize.width()) * targetSize.height() * 4;
+        if (m_scale <= 2.0 && pixmapBytes <= kScaledPixmapBudgetBytes) {
             if (m_scaledPixmap.isNull() || m_scaledTargetSize != targetSize) {
                 m_scaledTargetSize = targetSize;
                 m_scaledPixmap = QPixmap::fromImage(
@@ -435,7 +512,15 @@ protected:
             }
             p.drawPixmap(targetRect.topLeft(), m_scaledPixmap);
         } else {
-            p.drawImage(targetRect, m_image);
+            // На большом зуме масштабируем только видимую часть картинки,
+            // иначе Qt каждый кадр обрабатывает весь огромный targetRect.
+            const QRectF visible = targetRect.intersected(QRectF(rect()));
+            if (visible.isEmpty()) return;
+            const QRectF source((visible.left() - targetRect.left()) / m_scale,
+                                (visible.top() - targetRect.top()) / m_scale,
+                                visible.width() / m_scale,
+                                visible.height() / m_scale);
+            p.drawImage(visible, m_image, source);
         }
     }
 
@@ -450,6 +535,14 @@ protected:
         // точка под курсором остаётся на месте
         m_pan = mousePos - (mousePos - m_pan) * (newScale / m_scale);
         m_scale = newScale;
+        // если пользователь отзумился до вписанного вида оригинал снова
+        // не нужен и освобождаем десятки мегабайт
+        const double fitScale = std::min(double(width()) / m_image.width(),
+                                         double(height()) / m_image.height());
+        if (!m_isPreviewScaled && m_scale <= fitScale) {
+            dropFullResolution();
+        }
+        maybeRequestFullResolution();
 
         emit zoomChanged(currentZoomText());
         update();
@@ -508,6 +601,7 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* event) override {
         if (event->button() == Qt::LeftButton && !m_image.isNull()) {
+            dropFullResolution();
             m_isInitialFit = true;
             resetToFit();
             update();
@@ -518,11 +612,120 @@ protected:
     }
 
 private:
+    // возврат к вписанному виду: оригинал больше не нужен и оставляем только превью
+    // уменьшенную копию, чтобы не держать десятки мегабайт в памяти.
+    void dropFullResolution() {
+        // отменяем возможную незавершенную догрузку оригинала
+        m_fullResTimer.stop();
+        ++m_fullResRequest;
+        m_fullResRequested = false;
+        if (m_isPreviewScaled || m_image.isNull()) return;
+        // Если на вписанном виде превью всё равно пришлось бы растягивать
+        // если панель большая то оригинал нужен для качества
+        const QSize previewSize = boundedSize(m_originalSize, kPreviewMaxSide);
+        if (previewSize.isValid()) {
+            const double fitScale = std::min(double(width()) / previewSize.width(),
+                                             double(height()) / previewSize.height());
+            if (fitScale > kFullResTriggerScale) return;
+        }
+        const QSize target = boundedSize(m_image.size(), kPreviewMaxSide);
+        if (target == m_image.size()) return;
+        // Сохраняем визуальный размер: scale считается от пикселей картинки.
+        const double factor = double(m_image.width()) / double(target.width());
+        m_image = m_image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        m_scale *= factor;
+        m_scaledPixmap = QPixmap();
+        m_scaledTargetSize = QSize();
+        m_isPreviewScaled = true;
+        emit zoomChanged(currentZoomText());
+    }
+
+    void maybeRequestFullResolution() {
+        if (!m_isPreviewScaled || m_image.isNull() ||
+            m_filePath.empty() || m_originalSize.isEmpty()) {
+            return;
+        }
+        // Пока превью показывается 1:1 или уменьшенным, его пикселей хватает.
+        // если догрузка уже началась то отменяем ее потому что она больше не нужна
+        if (m_scale < kFullResTriggerScale) {
+            m_fullResTimer.stop();
+            if (m_fullResRequested) {
+                ++m_fullResRequest;
+                m_fullResRequested = false;
+            }
+            return;
+        }
+        if (m_fullResRequested) return;
+        m_fullResTimer.start();
+    }
+
+    void startFullResolutionLoad() {
+        if (!m_isPreviewScaled || m_fullResRequested || m_image.isNull() ||
+            m_filePath.empty() || m_originalSize.isEmpty() ||
+            m_scale < kFullResTriggerScale) {
+            return;
+        }
+
+        m_fullResRequested = true;
+        const quint64 requestId = ++m_fullResRequest;
+        const std::filesystem::path path = m_filePath;
+        const QSize original = m_originalSize;
+        QPointer<InteractiveImageViewer> self(this);
+        Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))
+            ->start([self, path, original, requestId]() {
+            QImageReader reader(QString::fromUtf8(path.c_str()));
+            reader.setAutoTransform(true);
+            const QSize decodeSize = boundedSize(original, kFullResMaxSide);
+            if (decodeSize.isValid() && decodeSize != original) {
+                reader.setScaledSize(decodeSize);
+            }
+            QImage full = reader.read();
+            if (full.isNull()) {
+                if (self) {
+                    QMetaObject::invokeMethod(self.data(), [self, requestId]() {
+                        if (self && requestId == self->m_fullResRequest) {
+                            self->m_fullResRequested = false;
+                        }
+                    }, Qt::QueuedConnection);
+                }
+                return;
+            }
+            if (!self) return;
+            if (full.width() > kFullResMaxSide || full.height() > kFullResMaxSide) {
+                full = full.scaled(boundedSize(full.size(), kFullResMaxSide),
+                                   Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            }
+            QMetaObject::invokeMethod(self.data(),
+                [self, full = std::move(full), requestId, path]() mutable {
+                    if (!self || requestId != self->m_fullResRequest ||
+                        self->m_filePath != path || self->m_image.isNull()) {
+                        return;
+                    }
+                    // scale привязан к пикселям текущей картинки: при замене
+                    // превью на полный размер пересчитываем его чтобы изображение
+                    // не прыгнуло на экране.
+                    const double factor = double(self->m_image.width()) / double(full.width());
+                    self->m_scale *= factor;
+                    self->m_image = std::move(full);
+                    self->m_isPreviewScaled = false;
+                    self->m_scaledPixmap = QPixmap();
+                    self->m_scaledTargetSize = QSize();
+                    self->zoomChanged(self->currentZoomText());
+                    self->update();
+                }, Qt::QueuedConnection);
+        });
+    }
+
     QImage m_image;
     QPixmap m_scaledPixmap;
     QSize m_scaledTargetSize;
+    QSize m_originalSize;
     QString m_baseInfo;
     std::filesystem::path m_filePath;
+    bool m_isPreviewScaled{false};
+    bool m_fullResRequested{false};
+    QTimer m_fullResTimer;
+    quint64 m_fullResRequest{0};
     double m_scale{1.0};
     QPointF m_pan{0, 0};
     bool m_isInitialFit{true};
@@ -805,408 +1008,210 @@ private:
     QVBoxLayout* m_cardsLayout{nullptr};
 };
 
-// интерактивный листинг архива (страница PageArchive)
-// MillerListView поверх Models::ArchiveModel, при перетаскивании выбранные записи
-// сначала распаковываются в кэш, наружу отдаются реальные файлы (Copy)
-
-namespace {
-constexpr char16_t kArchivePathSep = u'\x1F';
-
-// кэш распакованных записей уникален для архива (путь + mtime + размер),
-// повторные драги мгновенны, старые каталоги чистятся по возрасту
-std::filesystem::path archiveCacheDir(const std::filesystem::path& archive) {
-    std::error_code ec;
-    const auto mtime = std::filesystem::last_write_time(archive, ec);
-    const qint64 ns = ec ? 0 : std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                    mtime.time_since_epoch()).count();
-    const auto size = std::filesystem::file_size(archive, ec);
-    const QString sig = QString::fromUtf8(archive.c_str()) + QLatin1Char('|') +
-                        QString::number(ns) + QLatin1Char('|') +
-                        QString::number(ec ? 0 : static_cast<qulonglong>(size));
-    const QByteArray hash = QCryptographicHash::hash(sig.toUtf8(), QCryptographicHash::Sha1)
-                                .toHex().left(16);
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-    return std::filesystem::path((base + QStringLiteral("/archive-drag/") +
-                                  QString::fromLatin1(hash)).toStdString());
-}
-
-void cleanupOldArchiveCacheOnce() {
-    static bool done = false;
-    if (done) return;
-    done = true;
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
-                         QStringLiteral("/archive-drag");
-    QDir dir(base);
-    if (!dir.exists()) return;
-    const QDateTime cutoff = QDateTime::currentDateTime().addDays(-7);
-    const QFileInfoList entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QFileInfo& fi : entries) {
-        if (fi.lastModified() < cutoff) {
-            QDir(fi.absoluteFilePath()).removeRecursively();
-        }
-    }
-}
-}
-
-class ArchiveListView : public MillerListView {
+// постраничный PDF: страницы добавляются по мере прокрутки, рендер идёт в
+// фоновом пуле PreviewPane, поэтому виджет только показывает готовые кадры
+class DocumentViewer : public QWidget {
     Q_OBJECT
 
 public:
-    explicit ArchiveListView(QWidget* parent = nullptr)
-        : MillerListView(false, parent) {
-        setObjectName("archiveList");
-        connect(this, &MillerListView::contextMenuRequested, this, &ArchiveListView::showArchiveMenu);
+    explicit DocumentViewer(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setFocusPolicy(Qt::StrongFocus);
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        m_scroll = new QScrollArea(this);
+        m_scroll->setWidgetResizable(true);
+        m_scroll->setFrameShape(QFrame::NoFrame);
+        m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_scroll->setStyleSheet(QString("QScrollArea { background-color: %1; border: none; }")
+                                    .arg(Theme::Colors::Base().name()));
+        m_pages = new QWidget(m_scroll);
+        m_pages->setStyleSheet(QString("background-color: %1;").arg(Theme::Colors::Base().name()));
+        m_layout = new QVBoxLayout(m_pages);
+        m_layout->setContentsMargins(12, 12, 12, 12);
+        m_layout->setSpacing(8);
+        m_scroll->setWidget(m_pages);
+        layout->addWidget(m_scroll, 1);
     }
 
-    // после загрузки или навигации курсор на первой рабочей строке
-    void focusFirstRow() {
-        if (!model() || model()->rowCount() == 0 || !selectionModel()) return;
-        auto* am = qobject_cast<Models::ArchiveModel*>(model());
-        const int r = (am && am->isParentRow(0)) ? 1 : 0;
-        if (r >= model()->rowCount()) return;
-        const QModelIndex idx = model()->index(r, 0);
-        selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
-        selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-        scrollTo(idx, QAbstractItemView::PositionAtTop);
+    void setDocument(const std::filesystem::path& path, int pageCount) {
+        m_path = path;
+        m_pageCount = pageCount;
+        m_nextPage = 1;
+        m_requestedPage = 0;
+        m_complete = false;
+        clearPages();
+        m_scroll->verticalScrollBar()->setValue(0);
+        m_placeholder = new QLabel(QStringLiteral("Loading page 1…"), m_pages);
+        m_placeholder->setAlignment(Qt::AlignCenter);
+        m_placeholder->setFont(Theme::getMonospaceFont(9));
+        m_placeholder->setStyleSheet(QString("color: %1;").arg(Theme::Colors::Dim().name()));
+        m_layout->addWidget(m_placeholder);
+        QTimer::singleShot(0, this, [this]() { maybeRequestNext(); });
     }
 
-    // распаковка записей в кэш, возвращает реальные пути (для QDrag и открытия)
-    // abortOnRelease: ожидание прерывается, если кнопку отпустили до готовности,
-    // но фоновая распаковка продолжается и прогревает кэш
-    bool extractToCache(const QStringList& members, const QStringList& normalizedPaths,
-                        bool abortOnRelease,
-                        std::vector<std::filesystem::path>& outRealPaths, QString& outError);
+    void reset() {
+        m_requestedPage = 0;
+        m_complete = true;
+        clearPages();
+        m_pageCount = -1;
+        m_nextPage = 1;
+    }
+
+    void addPage(int page, const QImage& image) {
+        if (page != m_requestedPage || image.isNull()) return;
+        if (m_placeholder) {
+            m_layout->removeWidget(m_placeholder);
+            m_placeholder->deleteLater();
+            m_placeholder = nullptr;
+        }
+        auto* label = new QLabel(m_pages);
+        label->setAlignment(Qt::AlignCenter);
+        label->setStyleSheet(QString("background-color: %1;").arg(Theme::Colors::Base().name()));
+        m_layout->addWidget(label);
+        m_pagesData.push_back({page, image, label});
+        scalePage(m_pagesData.back());
+        // кадры нужны только последним страницам для пересчёта при
+        // изменении ширины панели; у остальных остаётся готовый pixmap
+        if (m_pagesData.size() > kMaxCachedPdfPageImages) {
+            m_pagesData[m_pagesData.size() - kMaxCachedPdfPageImages - 1].image = QImage();
+        }
+
+        m_requestedPage = 0;
+        m_nextPage = page + 1;
+        if (m_pageCount > 0 && m_nextPage > m_pageCount) m_complete = true;
+        QTimer::singleShot(0, this, [this]() {
+            auto* bar = m_scroll->verticalScrollBar();
+            if (!m_complete && (bar->maximum() <= 0 ||
+                                bar->value() > bar->maximum() - m_scroll->viewport()->height())) {
+                maybeRequestNext();
+            }
+        });
+    }
+
+    void pageFailed(int page, const QString& error, bool endOfDocument) {
+        if (page != m_requestedPage) return;
+        m_requestedPage = 0;
+        m_complete = true;
+        if (page == 1) {
+            if (m_placeholder) {
+                m_placeholder->setText(error.isEmpty() ? QStringLiteral("PDF preview unavailable")
+                                                       : error);
+            }
+            return;
+        }
+        Q_UNUSED(endOfDocument);
+        Q_UNUSED(error);
+    }
+
+signals:
+    void pageRequested(int page);
 
 protected:
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
-    void keyPressEvent(QKeyEvent* event) override;
-    std::vector<std::filesystem::path> dragOutPaths(const QModelIndex& startIndex) const override;
-    void startDragOut(const std::vector<std::filesystem::path>& paths,
-                      Qt::KeyboardModifiers modifiers,
-                      Qt::DropAction defaultAction) override;
-
-private:
-    void activateIndex(const QModelIndex& idx);
-    void openEntry(int row);
-    void showArchiveMenu(const QPoint& globalPos, const QModelIndex& idx);
-
-    // кнопка жеста: пока нажата ожидание продолжается,
-    // отпускание означает «не драг» и отменяет старт QDrag
-    bool m_gestureButtonDown{false};
-};
-
-bool ArchiveListView::extractToCache(const QStringList& members, const QStringList& normalizedPaths,
-                                     bool abortOnRelease,
-                                     std::vector<std::filesystem::path>& outRealPaths,
-                                     QString& outError) {
-    outRealPaths.clear();
-    outError.clear();
-    auto* am = qobject_cast<Models::ArchiveModel*>(model());
-    if (!am) return false;
-    const std::filesystem::path archive = am->archivePath();
-    if (archive.empty() || normalizedPaths.isEmpty()) return false;
-
-    cleanupOldArchiveCacheOnce();
-    const std::filesystem::path cacheDir = archiveCacheDir(archive);
-    std::error_code ec;
-    std::filesystem::create_directories(cacheDir, ec);
-    if (ec) {
-        outError = QStringLiteral("Cannot create cache folder: %1")
-                       .arg(QString::fromUtf8(ec.message().c_str()));
-        return false;
-    }
-
-    const bool singleStream = Core::XdgUtils::isSingleStreamArchive(archive);
-
-    // дозагружаем только отсутствующее
-    bool needExtract = false;
-    QStringList extractMembers;
-    if (singleStream) {
-        const QDir d(QString::fromUtf8(cacheDir.c_str()));
-        needExtract = d.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).isEmpty();
-    } else {
-        for (int i = 0; i < normalizedPaths.size(); ++i) {
-            std::error_code e2;
-            const auto real = cacheDir / normalizedPaths.at(i).toUtf8().toStdString();
-            if (!std::filesystem::exists(real, e2)) {
-                needExtract = true;
-                if (i < members.size()) extractMembers << members.at(i);
-            }
-        }
-    }
-
-    if (needExtract) {
-        struct ExtractState {
-            QMutex mutex;
-            bool done{false};
-            bool ok{false};
-            QString error;
-        };
-        auto state = std::make_shared<ExtractState>();
-        QThreadPool::globalInstance()->start([state, archive, extractMembers, cacheDir]() {
-            QString err;
-            bool ok = false;
-            // QThreadPool не ловит исключения воркера, а state->done обязан быть
-            // выставлен, иначе вложенный event loop ждёт его вечно
-            try {
-                ok = extractMembers.isEmpty()
-                    ? Core::XdgUtils::extractArchive(archive, cacheDir, err)
-                    : Core::XdgUtils::extractArchiveEntries(archive, extractMembers, cacheDir, err);
-            } catch (const std::exception& e) {
-                err = QString::fromUtf8(e.what());
-            } catch (...) {
-                err = QStringLiteral("Archive extraction failed");
-            }
-            QMutexLocker lock(&state->mutex);
-            state->done = true;
-            state->ok = ok;
-            state->error = err;
-        });
-
-        // вложенный цикл событий держит GUI живым, при abortOnRelease ожидание
-        // прекращается по отпусканию кнопки
-        QEventLoop loop;
-        QTimer poll;
-        poll.setInterval(15);
-        bool aborted = false;
-        QObject::connect(&poll, &QTimer::timeout, &loop, [&]() {
-            QMutexLocker lock(&state->mutex);
-            if (state->done) {
-                loop.quit();
-            } else if (abortOnRelease && !m_gestureButtonDown) {
-                aborted = true;
-                loop.quit();
-            }
-        });
-        poll.start();
-        loop.exec();
-        poll.stop();
-
-        if (aborted) return false;
-        {
-            QMutexLocker lock(&state->mutex);
-            if (!state->ok) {
-                outError = state->error;
-                return false;
-            }
-        }
-    }
-
-    if (singleStream) {
-        const QDir d(QString::fromUtf8(cacheDir.c_str()));
-        const QFileInfoList infos = d.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QFileInfo& fi : infos) {
-            outRealPaths.emplace_back(fi.absoluteFilePath().toUtf8().toStdString());
-        }
-    } else {
-        for (const QString& n : normalizedPaths) {
-            std::error_code e2;
-            const auto real = cacheDir / n.toUtf8().toStdString();
-            if (std::filesystem::exists(real, e2)) outRealPaths.push_back(real);
-        }
-    }
-    return !outRealPaths.empty();
-}
-
-void ArchiveListView::activateIndex(const QModelIndex& idx) {
-    auto* am = qobject_cast<Models::ArchiveModel*>(model());
-    if (!am || !idx.isValid()) return;
-    const int row = idx.row();
-    if (am->isParentRow(row)) {
-        if (am->navigateUp()) focusFirstRow();
-        return;
-    }
-    if (am->isDirAt(row)) {
-        am->navigateInto(am->entryPathAt(row));
-        focusFirstRow();
-        return;
-    }
-    openEntry(row);
-}
-
-void ArchiveListView::openEntry(int row) {
-    auto* am = qobject_cast<Models::ArchiveModel*>(model());
-    if (!am || row < 0) return;
-    const QString norm = am->entryPathAt(row);
-    const QString member = am->memberPathAt(row);
-    if (norm.isEmpty() || member.isEmpty()) return;
-
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    std::vector<std::filesystem::path> real;
-    QString err;
-    const bool ok = extractToCache({member}, {norm}, false, real, err);
-    QApplication::restoreOverrideCursor();
-
-    if (!ok || real.empty()) {
-        TuiConfirmPopup::alert(this, "Extraction Error",
-                               err.isEmpty() ? QStringLiteral("cannot extract entry") : err);
-        return;
-    }
-    Core::XdgUtils::openWithDefault(real.front());
-}
-
-void ArchiveListView::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) m_gestureButtonDown = true;
-    MillerListView::mousePressEvent(event);
-}
-
-void ArchiveListView::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) m_gestureButtonDown = false;
-    MillerListView::mouseReleaseEvent(event);
-}
-
-void ArchiveListView::mouseDoubleClickEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
-        const QModelIndex idx = indexAt(event->pos());
-        if (idx.isValid()) {
-            activateIndex(idx);
+    void keyPressEvent(QKeyEvent* event) override {
+        auto* bar = m_scroll->verticalScrollBar();
+        const int step = qMax(40, m_scroll->viewport()->height() / 3);
+        if (event->key() == Qt::Key_Down) {
+            bar->setValue(bar->value() + step);
             event->accept();
             return;
         }
-    }
-    QListView::mouseDoubleClickEvent(event);
-}
-
-void ArchiveListView::keyPressEvent(QKeyEvent* event) {
-    const int k = event->key();
-    if (k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Right) {
-        if (currentIndex().isValid()) activateIndex(currentIndex());
-        return;
-    }
-    if (k == Qt::Key_Left || k == Qt::Key_Backspace) {
-        auto* am = qobject_cast<Models::ArchiveModel*>(model());
-        if (am && am->navigateUp()) focusFirstRow();
-        return;
-    }
-    if (k == Qt::Key_Space) {
-        const QModelIndex cur = currentIndex();
-        if (cur.isValid() && selectionModel() && model()) {
-            selectionModel()->select(cur, QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
-            const int nextRow = std::min(cur.row() + 1, model()->rowCount() - 1);
-            const QModelIndex next = model()->index(nextRow, 0);
-            if (next.isValid()) {
-                selectionModel()->setCurrentIndex(next, QItemSelectionModel::NoUpdate);
-                scrollTo(next, QAbstractItemView::EnsureVisible);
-            }
+        if (event->key() == Qt::Key_Up) {
+            bar->setValue(bar->value() - step);
+            event->accept();
+            return;
         }
-        return;
-    }
-    if (k == Qt::Key_A && (event->modifiers() & Qt::ControlModifier)) {
-        selectAll();
-        return;
-    }
-    MillerListView::keyPressEvent(event);
-}
-
-std::vector<std::filesystem::path> ArchiveListView::dragOutPaths(const QModelIndex& startIndex) const {
-    std::vector<std::filesystem::path> out;
-    auto* am = qobject_cast<Models::ArchiveModel*>(model());
-    if (!am || !startIndex.isValid()) return out;
-
-    QModelIndexList rows;
-    if (selectionModel() && selectionModel()->isSelected(startIndex)) {
-        rows = selectionModel()->selectedIndexes();
-    } else {
-        rows << startIndex;
-    }
-    if (rows.isEmpty()) rows << startIndex;
-    std::sort(rows.begin(), rows.end(), [](const QModelIndex& a, const QModelIndex& b) {
-        return a.row() < b.row();
-    });
-
-    for (const QModelIndex& i : rows) {
-        if (am->isParentRow(i.row())) continue;
-        const QString norm = am->entryPathAt(i.row());
-        const QString member = am->memberPathAt(i.row());
-        if (norm.isEmpty() || member.isEmpty()) continue;
-        // формат: архив <0x1F> нормализованный путь <0x1F> имя в архиве
-        const QString vp = QString::fromUtf8(am->archivePath().c_str()) + QChar(kArchivePathSep) +
-                           norm + QChar(kArchivePathSep) + member;
-        out.emplace_back(vp.toUtf8().toStdString());
-    }
-    return out;
-}
-
-void ArchiveListView::startDragOut(const std::vector<std::filesystem::path>& paths,
-                                   Qt::KeyboardModifiers /*modifiers*/,
-                                   Qt::DropAction /*defaultAction*/) {
-    QStringList members;
-    QStringList normalized;
-    for (const auto& vp : paths) {
-        const QString s = QString::fromUtf8(vp.c_str());
-        const QStringList parts = s.split(QChar(kArchivePathSep));
-        if (parts.size() != 3 || parts[1].isEmpty() || parts[2].isEmpty()) continue;
-        normalized << parts[1];
-        members << parts[2];
-    }
-    if (normalized.isEmpty()) return;
-
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    std::vector<std::filesystem::path> real;
-    QString err;
-    const bool ok = extractToCache(members, normalized, /*abortOnRelease=*/true, real, err);
-    QApplication::restoreOverrideCursor();
-    if (!ok) {
-        if (!err.isEmpty()) TuiConfirmPopup::alert(this, "Extraction Error", err);
-        return;
+        if (event->key() == Qt::Key_PageDown || event->key() == Qt::Key_Space) {
+            bar->setValue(bar->value() + m_scroll->viewport()->height());
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_PageUp) {
+            bar->setValue(bar->value() - m_scroll->viewport()->height());
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Home) {
+            bar->setValue(0);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_End) {
+            bar->setValue(bar->maximum());
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
     }
 
-    QDrag* drag = Dnd::DragDropHandler::createDrag(real, this);
-    if (drag) {
-        // из архива только копирование: реальные файлы лежат во временном кэше
-        drag->exec(Qt::CopyAction, Qt::CopyAction);
-    }
-}
-
-void ArchiveListView::showArchiveMenu(const QPoint& globalPos, const QModelIndex& idx) {
-    auto* am = qobject_cast<Models::ArchiveModel*>(model());
-    if (!am) return;
-
-    auto menu = new QMenu(this);
-    menu->setAttribute(Qt::WA_DeleteOnClose);
-    menu->setFont(Theme::getMonospaceFont(9));
-    menu->setStyleSheet(Theme::getApplicationStyleSheet());
-
-    if (idx.isValid() && !am->isParentRow(idx.row())) {
-        auto actOpen = menu->addAction("\U000F0214 Open\tEnter");
-        connect(actOpen, &QAction::triggered, this, [this, idx]() { activateIndex(idx); });
-        menu->addSeparator();
+    void mousePressEvent(QMouseEvent* event) override {
+        setFocus(Qt::MouseFocusReason);
+        QWidget::mousePressEvent(event);
     }
 
-    auto actExtract = menu->addAction("\U000F06EB Extract In");
-    connect(actExtract, &QAction::triggered, this, [this, am]() {
-        const std::filesystem::path arc = am->archivePath();
-        const std::filesystem::path dest =
-            arc.parent_path() / Core::XdgUtils::archiveExtractDirName(arc);
-        QPointer<ArchiveListView> self(this);
-        QThreadPool::globalInstance()->start([self, arc, dest]() {
-            QString err;
-            std::filesystem::path actualDest;
-            bool ok = false;
-            // исключение воркера не должно убить процесс
-            try {
-                ok = Core::XdgUtils::extractArchive(arc, dest, err, &actualDest);
-            } catch (const std::exception& e) {
-                err = QString::fromUtf8(e.what());
-            } catch (...) {
-                err = QStringLiteral("Archive extraction failed");
-            }
-            QMetaObject::invokeMethod(qApp, [self, ok, err]() {
-                if (!self) return;
-                if (!ok) TuiConfirmPopup::alert(self.data(), "Extraction Error", err);
-            }, Qt::QueuedConnection);
-        });
-    });
+    void resizeEvent(QResizeEvent* event) override {
+        QWidget::resizeEvent(event);
+        for (Page& page : m_pagesData) scalePage(page);
+    }
 
-    auto actCopy = menu->addAction("\U000F0337 Copy Archive Path");
-    connect(actCopy, &QAction::triggered, this, [am]() {
-        QApplication::clipboard()->setText(QString::fromUtf8(am->archivePath().c_str()));
-    });
+private:
+    struct Page {
+        int number{0};
+        QImage image;
+        QLabel* label{nullptr};
+    };
 
-    menu->popup(globalPos);
-}
+    void clearPages() {
+        while (QLayoutItem* item = m_layout->takeAt(0)) {
+            if (QWidget* widget = item->widget()) widget->deleteLater();
+            delete item;
+        }
+        m_pagesData.clear();
+        m_placeholder = nullptr;
+    }
+
+    void maybeRequestNext() {
+        if (m_complete || m_requestedPage > 0) return;
+        if (m_pageCount > 0 && m_nextPage > m_pageCount) {
+            m_complete = true;
+            return;
+        }
+        m_requestedPage = m_nextPage;
+        emit pageRequested(m_requestedPage);
+    }
+
+    void scalePage(Page& page) {
+        if (!page.label) return;
+        const int available = qMax(80, m_scroll->viewport()->width() - 32);
+        if (page.image.isNull()) {
+            // shortcut: у старых страниц остался только pixmap, поэтому
+            // повторный resize масштабирует уже уменьшенную копию и может
+            // мылить картинку; для превью это допустимо
+            const QPixmap current = page.label->pixmap();
+            if (current.isNull() || current.width() == available) return;
+            page.label->setPixmap(current.scaledToWidth(available, Qt::SmoothTransformation));
+            return;
+        }
+        const QPixmap pixmap = (page.image.width() > available)
+            ? QPixmap::fromImage(page.image.scaledToWidth(available, Qt::SmoothTransformation))
+            : QPixmap::fromImage(page.image);
+        page.label->setPixmap(pixmap);
+    }
+
+    QScrollArea* m_scroll{nullptr};
+    QWidget* m_pages{nullptr};
+    QVBoxLayout* m_layout{nullptr};
+    QLabel* m_placeholder{nullptr};
+    std::filesystem::path m_path;
+    std::vector<Page> m_pagesData;
+    int m_pageCount{-1};
+    int m_nextPage{1};
+    int m_requestedPage{0};
+    bool m_complete{false};
+};
 
 PreviewPane::PreviewPane(QWidget* parent)
     : QWidget(parent) {
@@ -1261,13 +1266,20 @@ void PreviewPane::setupUi() {
     // PageDir: превью листинга каталога, приглушённое как родительская колонка
     m_dirListView = new MillerListView(true, this);
     m_dirModel = new Models::FileSystemModel(this);
+    // Превью не показывает размер, дату и права, зато листинг больших папок
+    // становится заметно быстрее.
+    m_dirModel->setLightweightScan(true);
     m_dirDelegate = new FileItemDelegate(true, this);
     m_dirListView->setModel(m_dirModel);
     m_dirListView->setItemDelegate(m_dirDelegate);
     m_dirListView->setContextMenuPolicy(Qt::CustomContextMenu);
 
     connect(m_dirListView, &MillerListView::enterDirectoryRequested, this, &PreviewPane::enterDirectoryRequested);
-    connect(m_dirListView, &MillerListView::openFileRequested, this, [](const std::filesystem::path& p) {
+    connect(m_dirListView, &MillerListView::openFileRequested, this, [this](const std::filesystem::path& p) {
+        if (Core::XdgUtils::isArchive(p)) {
+            emit archiveOpenRequested(p);
+            return;
+        }
         Core::XdgUtils::openWithDefault(p);
     });
     connect(m_dirListView, &MillerListView::filesDropped, this, [this](const auto& sources, const auto& targetDir, auto action, auto mods) {
@@ -1285,6 +1297,8 @@ void PreviewPane::setupUi() {
         std::filesystem::path p(pathStr.toUtf8().toStdString());
         if (isDir) {
             emit enterDirectoryRequested(p);
+        } else if (Core::XdgUtils::isArchive(p)) {
+            emit archiveOpenRequested(p);
         } else {
             Core::XdgUtils::openWithDefault(p);
         }
@@ -1325,34 +1339,33 @@ void PreviewPane::setupUi() {
         archiveLayout->setContentsMargins(0, 0, 0, 0);
         archiveLayout->setSpacing(0);
 
-        m_archiveInfoLabel = new QLabel(m_archivePage);
-        m_archiveInfoLabel->setObjectName("archiveInfo");
-        m_archiveInfoLabel->setFont(Theme::getMonospaceFont(8));
-        m_archiveInfoLabel->setWordWrap(false);
-        m_archiveInfoLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        m_archiveInfoLabel->setStyleSheet(
-            QString("background-color: %1; color: %2; padding: 6px 10px;")
-                .arg(Theme::Colors::Base().name(), Theme::Colors::Dim().name()));
-        archiveLayout->addWidget(m_archiveInfoLabel, 0);
-
         m_archiveModel = new Models::ArchiveModel(this);
-        m_archiveList = new ArchiveListView(m_archivePage);
-        m_archiveList->setModel(m_archiveModel);
-        // не dimmed: листинг интерактивный, в отличие от пассивного превью папки
-        m_archiveList->setItemDelegate(new FileItemDelegate(false, m_archiveList));
-        archiveLayout->addWidget(m_archiveList, 1);
+        m_archiveTree = new ArchiveTreeWidget(m_archivePage);
+        m_archiveTree->setArchiveModel(m_archiveModel);
+        archiveLayout->addWidget(m_archiveTree, 1);
     }
+    connect(m_archiveModel, &Models::ArchiveModel::archiveReset, this, [this]() {
+        if (m_archiveTree) m_archiveTree->clearArchive();
+    });
     connect(m_archiveModel, &Models::ArchiveModel::loaded, this, [this]() {
-        updateArchiveInfo();
-        if (m_archiveList) m_archiveList->focusFirstRow();
+        if (m_archiveTree) {
+            m_archiveTree->buildFromEntries(m_archiveModel->entries());
+        }
     });
-    connect(m_archiveModel, &Models::ArchiveModel::loadFailed, this, [this](const QString&) {
-        updateArchiveInfo();
+    connect(m_archiveModel, &Models::ArchiveModel::loadFailed, this, [this](const QString& error) {
+        if (m_archiveTree) m_archiveTree->showMessage(error);
     });
-    connect(m_archiveModel, &Models::ArchiveModel::prefixChanged, this, [this]() {
-        updateArchiveInfo();
-    });
+    connect(m_archiveTree, &ArchiveTreeWidget::selectionInteractionStarted,
+            this, &PreviewPane::archiveSelectionInteractionStarted);
+    connect(m_archiveTree, &ArchiveTreeWidget::messageRequested,
+            this, &PreviewPane::messageRequested);
     m_stackedWidget->addWidget(m_archivePage);
+
+    // PageDocument: PDF, постраничная прокрутка и фоновая догрузка страниц
+    m_documentViewer = new DocumentViewer(this);
+    connect(m_documentViewer, &DocumentViewer::pageRequested,
+            this, &PreviewPane::requestDocumentPage);
+    m_stackedWidget->addWidget(m_documentViewer);
 
     mainLayout->addWidget(m_stackedWidget);
     m_stackedWidget->setCurrentIndex(PageEmpty);
@@ -1361,7 +1374,7 @@ void PreviewPane::setupUi() {
     // ложный сброс на PageEmpty при перезагрузке модели (watcher / rename / delete)
     m_previewDebounce = new QTimer(this);
     m_previewDebounce->setSingleShot(true);
-    m_previewDebounce->setInterval(55);
+    m_previewDebounce->setInterval(16);
     connect(m_previewDebounce, &QTimer::timeout, this, [this]() {
         if (m_pendingClear && !m_hasPending) {
             m_pendingClear = false;
@@ -1382,6 +1395,10 @@ void PreviewPane::resizeEvent(QResizeEvent* event) {
 }
 
 void PreviewPane::dragEnterEvent(QDragEnterEvent* event) {
+    if (m_stackedWidget && m_stackedWidget->currentIndex() == PageArchive) {
+        event->ignore();
+        return;
+    }
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
         event->acceptProposedAction();
     } else {
@@ -1390,6 +1407,10 @@ void PreviewPane::dragEnterEvent(QDragEnterEvent* event) {
 }
 
 void PreviewPane::dragMoveEvent(QDragMoveEvent* event) {
+    if (m_stackedWidget && m_stackedWidget->currentIndex() == PageArchive) {
+        event->ignore();
+        return;
+    }
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
         event->acceptProposedAction();
     } else {
@@ -1398,6 +1419,10 @@ void PreviewPane::dragMoveEvent(QDragMoveEvent* event) {
 }
 
 void PreviewPane::dropEvent(QDropEvent* event) {
+    if (m_stackedWidget && m_stackedWidget->currentIndex() == PageArchive) {
+        event->ignore();
+        return;
+    }
     if (!Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
         event->ignore();
         return;
@@ -1447,6 +1472,8 @@ void PreviewPane::onDirContextMenu(const QPoint& globalPos, const QModelIndex& i
             std::error_code ec;
             if (std::filesystem::is_directory(sel.front(), ec)) {
                 emit enterDirectoryRequested(sel.front());
+            } else if (Core::XdgUtils::isArchive(sel.front())) {
+                emit archiveOpenRequested(sel.front());
             } else {
                 Core::XdgUtils::openWithDefault(sel.front());
             }
@@ -1470,50 +1497,46 @@ void PreviewPane::onDirContextMenu(const QPoint& globalPos, const QModelIndex& i
         const std::filesystem::path arc = sel.front();
         const std::filesystem::path dest = arc.parent_path();
         QPointer<PreviewPane> self(this);
-        QThreadPool::globalInstance()->start([self, arc, dest]() {
-            QString err;
-            std::filesystem::path actualDest;
-            bool ok = false;
-            // исключение воркера не должно убить процесс
-            try {
-                ok = Core::XdgUtils::extractArchive(arc, dest, err, &actualDest);
-            } catch (const std::exception& e) {
-                err = QString::fromUtf8(e.what());
-            } catch (...) {
-                err = QStringLiteral("Archive extraction failed");
-            }
-            QMetaObject::invokeMethod(qApp, [self, ok, err]() {
-                if (!self) return;
-                if (ok) {
-                    if (self->m_dirModel) self->m_dirModel->refresh();
-                } else {
-                    TuiConfirmPopup::alert(self.data(), "Extraction Error", err);
+        Core::Tasks::TaskManager::instance().submit(
+            QStringLiteral("Extract %1").arg(QString::fromUtf8(arc.filename().c_str())),
+            QStringLiteral("preview"),
+            [self, arc, dest](Core::Tasks::TaskContext& ctx) {
+                QString err;
+                std::filesystem::path actualDest;
+                bool ok = false;
+                // исключение воркера не должно убить процесс
+                try {
+                    ok = Core::XdgUtils::extractArchive(arc, dest, err, &actualDest,
+                                                        ctx.cancelToken());
+                } catch (const std::exception& e) {
+                    err = QString::fromUtf8(e.what());
+                } catch (...) {
+                    err = QStringLiteral("Archive extraction failed");
                 }
-            }, Qt::QueuedConnection);
-        });
+                const bool cancelled = ctx.cancelled();
+                if (ok) {
+                    ctx.log(QStringLiteral("extracted to %1").arg(QString::fromUtf8(actualDest.c_str())));
+                } else if (!cancelled && !err.isEmpty()) {
+                    ctx.log(err);
+                    ctx.fail(err);
+                }
+                ctx.progress(cancelled ? 0 : 1, 1);
+                QMetaObject::invokeMethod(qApp, [self, ok, cancelled, err]() {
+                    if (!self || cancelled) return;
+                    if (ok) {
+                        if (self->m_dirModel) self->m_dirModel->refresh();
+                    } else {
+                        TuiConfirmPopup::alert(self.data(), "Extraction Error", err);
+                    }
+                }, Qt::QueuedConnection);
+            });
     });
     connect(menu, &TuiContextMenu::extractInRequested, this, [this, sel]() {
         if (sel.empty()) return;
-        emit extractInRequested(sel.front());
-    });
-    connect(menu, &TuiContextMenu::sudoOpenRequested, this, [this, sel]() {
-        std::filesystem::path target = sel.empty() ? m_activePath : sel.front();
-        std::error_code ec;
-        bool isDir = std::filesystem::is_directory(target, ec);
-        if (!isDir) {
-            QProcess checkProc;
-            const QStringList checkArgv = Core::XdgUtils::rootArgs({"test", "-d", QString::fromUtf8(target.c_str())});
-            checkProc.start(checkArgv.first(), checkArgv.mid(1));
-            if (checkProc.waitForFinished(400) && checkProc.exitCode() == 0) {
-                isDir = true;
-            }
-        }
-        if (isDir) {
-            emit enterDirectoryRequested(target);
-        } else {
-            QString sudoErr;
-            Core::XdgUtils::openFileWithSudo(target, sudoErr);
-        }
+        // hideEvent меню возвращает фокус панели; оверлей открываем после этого
+        QTimer::singleShot(0, this, [this, archive = sel.front()]() {
+            emit extractInRequested(archive);
+        });
     });
     connect(menu, &TuiContextMenu::copyPathRequested, this, [this, sel](int mode) {
         std::filesystem::path target = sel.empty() ? m_activePath : sel.front();
@@ -1553,7 +1576,6 @@ void PreviewPane::contextMenuEvent(QContextMenuEvent* event) {
 
     auto actOpen = menu->addAction("\U000F0214 Open\tEnter");
     auto actTerm = menu->addAction("\U000F0489 Open Terminal\tF4");
-    auto actSudo = menu->addAction("\U000F05D7 Sudo Open");
     menu->addSeparator();
     auto actCopyPath = menu->addAction("\U000F0337 Copy Path\tCtrl+Shift+C");
     auto actCopyName = menu->addAction("\U000F018F Copy Name");
@@ -1561,30 +1583,16 @@ void PreviewPane::contextMenuEvent(QContextMenuEvent* event) {
     auto actProps = menu->addAction("\U000F02FD Properties\tAlt+Enter");
 
     connect(actOpen, &QAction::triggered, this, [this]() {
+        if (Core::XdgUtils::isArchive(m_activePath)) {
+            emit archiveOpenRequested(m_activePath);
+            return;
+        }
         Core::XdgUtils::openWithDefault(m_activePath);
     });
     connect(actTerm, &QAction::triggered, this, [this]() {
         std::error_code ec;
         bool isDir = std::filesystem::is_directory(m_activePath, ec);
         Core::XdgUtils::openTerminalAt(isDir ? m_activePath : m_activePath.parent_path());
-    });
-    connect(actSudo, &QAction::triggered, this, [this]() {
-        std::error_code ec;
-        bool isDir = std::filesystem::is_directory(m_activePath, ec);
-        if (!isDir) {
-            QProcess checkProc;
-            const QStringList checkArgv = Core::XdgUtils::rootArgs({"test", "-d", QString::fromUtf8(m_activePath.c_str())});
-            checkProc.start(checkArgv.first(), checkArgv.mid(1));
-            if (checkProc.waitForFinished(400) && checkProc.exitCode() == 0) {
-                isDir = true;
-            }
-        }
-        if (isDir) {
-            emit enterDirectoryRequested(m_activePath);
-        } else {
-            QString sudoErr;
-            Core::XdgUtils::openFileWithSudo(m_activePath, sudoErr);
-        }
     });
     connect(actProps, &QAction::triggered, this, [this]() {
         emit propertiesRequested(m_activePath);
@@ -1620,6 +1628,7 @@ void PreviewPane::performClearNow() {
             return;
         }
     }
+    resetDocumentPreview();
     (*m_currentJobId)++;
     m_activePath.clear();
     m_activeMtimeSec = 0;
@@ -1631,6 +1640,79 @@ void PreviewPane::performClearNow() {
     }
     if (m_emptyLabel) m_emptyLabel->setText("Select an item to preview");
     if (m_stackedWidget) m_stackedWidget->setCurrentIndex(PageEmpty);
+}
+
+void PreviewPane::prefetchPath(const std::filesystem::path& path) {
+    if (path.empty() || path == m_activePath) return;
+    const bool video = Core::Search::isVideoFile(path);
+    const bool pdf = Core::Search::isPdfFile(path);
+    if (!video && !pdf) return;
+
+    const QString key = QString::fromUtf8(path.c_str());
+    if (m_prefetchInFlight.contains(key) || m_prefetchInFlight.size() >= 2) return;
+    for (const CachedImageEntry& entry : m_imageCache) {
+        if (entry.path == path) return;
+    }
+    m_prefetchInFlight.insert(key);
+
+    int64_t mtimeSec = 0, mtimeNsec = 0;
+    uintmax_t fileSize = 0;
+    getFileStatSignature(path, mtimeSec, mtimeNsec, fileSize);
+    QPointer<PreviewPane> self(this);
+
+    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))->start(
+        [self, path, key, video, mtimeSec, mtimeNsec, fileSize]() {
+        QImage image = Core::Thumbnails::loadCached(path, video ? 0 : 1);
+        QString info;
+        if (image.isNull()) {
+            if (video) {
+                auto rendered = Core::Thumbnails::renderVideo(path, 480);
+                image = rendered.image;
+                info = rendered.info;
+            } else {
+                auto rendered = Core::Thumbnails::renderPdfPage(path, 1, kPdfPageRenderWidth);
+                image = rendered.image;
+                info = rendered.info;
+            }
+        }
+        QMetaObject::invokeMethod(qApp,
+            [self, path, key, video, mtimeSec, mtimeNsec, fileSize,
+             image = std::move(image), info]() mutable {
+            if (!self) return;
+            self->m_prefetchInFlight.remove(key);
+            if (!video || image.isNull()) return;
+            for (const CachedImageEntry& entry : self->m_imageCache) {
+                if (entry.path == path) return;
+            }
+            self->storeInImageCache(
+                {path, mtimeSec, mtimeNsec, fileSize, image, image.size(),
+                 info.isEmpty() ? QStringLiteral("Video") : info});
+        }, Qt::QueuedConnection);
+    });
+}
+
+bool PreviewPane::archivePageActive() const {
+    return m_stackedWidget && m_stackedWidget->currentIndex() == PageArchive;
+}
+
+void PreviewPane::clearArchiveSelection() {
+    if (m_archiveTree) m_archiveTree->clearEntrySelection();
+}
+
+void PreviewPane::selectAllArchiveEntries() {
+    if (archivePageActive() && m_archiveTree) m_archiveTree->selectAllEntries();
+}
+
+void PreviewPane::selectFirstArchiveEntry() {
+    if (archivePageActive() && m_archiveTree) m_archiveTree->selectFirstEntry();
+}
+
+void PreviewPane::selectLastArchiveEntry() {
+    if (archivePageActive() && m_archiveTree) m_archiveTree->selectLastEntry();
+}
+
+void PreviewPane::copyArchiveSelection() {
+    if (archivePageActive() && m_archiveTree) m_archiveTree->copySelectedEntries();
 }
 
 void PreviewPane::clearPreview() {
@@ -1652,29 +1734,62 @@ void PreviewPane::clearPreview() {
     }
 }
 
-void PreviewPane::updateArchiveInfo() {
-    if (!m_archiveInfoLabel || !m_archiveModel) return;
-    const QString name = QString::fromUtf8(m_archiveModel->archivePath().filename().c_str());
-    QString text;
-    if (m_archiveModel->isLoading()) {
-        text = QString("%1: reading…").arg(name);
-    } else if (!m_archiveModel->error().isEmpty()) {
-        text = QString("%1: preview unavailable: %2").arg(name, m_archiveModel->error());
-    } else {
-        text = QString("%1: %2 files, %3 dirs | %4")
-                   .arg(name)
-                   .arg(m_archiveModel->fileCount())
-                   .arg(m_archiveModel->dirCount())
-                   .arg(Core::XdgUtils::formatSize(m_archiveModel->totalSize()));
-        if (m_archiveModel->isTruncated()) text += " | list truncated";
-        if (!m_archiveModel->prefix().isEmpty()) text += " / " + m_archiveModel->prefix();
+void PreviewPane::resetDocumentPreview() {
+    ++m_documentGeneration;
+    if (m_documentCancel) m_documentCancel->store(true);
+    m_documentCancel.reset();
+    m_documentPath.clear();
+    m_documentPages = -1;
+    if (m_documentViewer) m_documentViewer->reset();
+}
+
+void PreviewPane::startDocumentPreview(const std::filesystem::path& path, int pageCount) {
+    resetDocumentPreview();
+    m_documentPath = path;
+    m_documentPages = pageCount;
+    m_documentCancel = std::make_shared<std::atomic_bool>(false);
+    if (!m_documentViewer) return;
+    m_documentViewer->setDocument(path, pageCount);
+    m_stackedWidget->setCurrentIndex(PageDocument);
+    m_documentViewer->setFocus(Qt::OtherFocusReason);
+}
+
+void PreviewPane::requestDocumentPage(int page) {
+    if (m_documentPath.empty() || m_activePath != m_documentPath ||
+        !m_documentCancel || page < 1) {
+        return;
     }
-    m_archiveInfoLabel->setText(text);
+
+    const int generation = m_documentGeneration;
+    const std::filesystem::path path = m_documentPath;
+    auto cancelToken = m_documentCancel;
+    QPointer<PreviewPane> self(this);
+
+    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))->start(
+        [self, generation, path, page, cancelToken]() {
+        QImage image = Core::Thumbnails::loadCached(path, page);
+        QString error;
+        if (image.isNull()) {
+            auto rendered = Core::Thumbnails::renderPdfPage(path, page, kPdfPageRenderWidth, cancelToken);
+            if (rendered.cancelled || cancelToken->load()) return;
+            image = rendered.image;
+            error = rendered.error;
+        }
+        QMetaObject::invokeMethod(qApp, [self, generation, page, image = std::move(image), error]() mutable {
+            if (!self || generation != self->m_documentGeneration) return;
+            if (!image.isNull()) {
+                self->m_documentViewer->addPage(page, image);
+            } else {
+                self->m_documentViewer->pageFailed(page, error, page > 1);
+            }
+        }, Qt::QueuedConnection);
+    });
 }
 
 void PreviewPane::displayImageImmediate(const std::filesystem::path& path,
                                         int64_t mtimeSec, int64_t mtimeNsec, uintmax_t fileSize,
-                                        const QImage& img, const QString& info) {
+                                        const QImage& img, const QSize& originalSize,
+                                        const QString& info) {
     setUpdatesEnabled(false);
     m_activePath = path;
     m_activeMtimeSec = mtimeSec;
@@ -1687,9 +1802,32 @@ void PreviewPane::displayImageImmediate(const std::filesystem::path& path,
             m_imageContainer->layout()->activate();
         }
     }
-    m_imageViewer->setImage(m_currentImage, info, path);
+    m_imageViewer->setImage(m_currentImage, originalSize, info, path);
     setUpdatesEnabled(true);
     update();
+}
+
+void PreviewPane::storeInImageCache(CachedImageEntry entry) {
+    for (auto it = m_imageCache.begin(); it != m_imageCache.end(); ++it) {
+        if (it->path == entry.path) {
+            m_imageCache.erase(it);
+            break;
+        }
+    }
+    m_imageCache.push_back(std::move(entry));
+
+    qint64 totalBytes = 0;
+    for (const auto& cached : m_imageCache) {
+        totalBytes += cached.image.sizeInBytes();
+    }
+    // Старые записи вытесняются по общему бюджету, а не только по числу
+    // файлов: снимки полного разрешения легко превращались в сотни мегабайт
+    while (m_imageCache.size() > 1 &&
+           (m_imageCache.size() > kImageCacheMaxEntries ||
+            totalBytes > kImageCacheBudgetBytes)) {
+        totalBytes -= m_imageCache.front().image.sizeInBytes();
+        m_imageCache.erase(m_imageCache.begin());
+    }
 }
 
 void PreviewPane::previewPath(const std::filesystem::path& path) {
@@ -1702,6 +1840,18 @@ void PreviewPane::previewPath(const std::filesystem::path& path) {
     }
 
     m_pendingClear = false;
+
+    // Каталоги показываем сразу, потому что листинг грузится асинхронно
+    // и умеет отменяться. Задержка только замораживала превью, пока
+    // пользователь ведёт фокус стрелками.
+    std::error_code dirEc;
+    if (std::filesystem::is_directory(path, dirEc)) {
+        if (m_previewDebounce) m_previewDebounce->stop();
+        m_hasPending = false;
+        m_pendingPath.clear();
+        loadPathNow(path);
+        return;
+    }
 
     int64_t mtimeSec = 0, mtimeNsec = 0;
     uintmax_t fileSize = 0;
@@ -1729,7 +1879,8 @@ void PreviewPane::previewPath(const std::filesystem::path& path) {
                 m_hasPending = false;
                 m_pendingPath.clear();
                 (*m_currentJobId)++;
-                displayImageImmediate(path, mtimeSec, mtimeNsec, fileSize, hit.image, hit.info);
+                displayImageImmediate(path, mtimeSec, mtimeNsec, fileSize,
+                                      hit.image, hit.originalSize, hit.info);
                 return;
             }
         }
@@ -1751,6 +1902,8 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
         performClearNow();
         return;
     }
+
+    if (!Core::Search::isPdfFile(path)) resetDocumentPreview();
 
     int64_t mtimeSec = 0, mtimeNsec = 0;
     uintmax_t fileSize = 0;
@@ -1780,18 +1933,18 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
     // случай 1.5: архив, интерактивный листинг содержимого (асинхронная
     // загрузка внутри модели, страница показывается сразу с «reading…»
     if (Core::XdgUtils::isArchive(path)) {
+        if (m_archiveTree) m_archiveTree->setArchivePath(path);
         m_archiveModel->setArchive(path);
-        updateArchiveInfo();
         m_stackedWidget->setCurrentIndex(PageArchive);
         return;
     }
 
-    // нативные preview-плагины (*.so): render вызывается в пуле потоков,
+    // нативные плагины превью: рендер вызывается в пуле потоков,
     // внутри доступен только write, пустой вывод откат к встроенному превью
     if (!skipPlugin && NativePluginHost::instance().hasPreview(path)) {
         QPointer<PreviewPane> self(this);
         auto jobCounter = m_currentJobId;
-        QThreadPool::globalInstance()->start([self, jobCounter, path, jobId]() {
+        Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))->start([self, jobCounter, path, jobId]() {
             QByteArray buf;
             NativePluginHost::instance().renderPreview(
                 path, [&buf](const char* data, size_t len) { buf.append(data, len); });
@@ -1822,7 +1975,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
             const QString qParent = parentPath.empty() ? QString() : QString::fromUtf8(parentPath.c_str());
             QPointer<PreviewPane> self(this);
             auto jobCounter = m_currentJobId;
-            QThreadPool::globalInstance()->start([self, jobCounter, path, jobId, prevPlugin, qPath, qParent]() {
+            Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))->start([self, jobCounter, path, jobId, prevPlugin, qPath, qParent]() {
                 QString text;
                 const QStringList parts = QProcess::splitCommand(prevPlugin.exec);
                 if (!parts.isEmpty()) {
@@ -1865,11 +2018,22 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
     auto jobCounter = m_currentJobId;
 
     // асинхронное выполнение в пуле потоков, чтобы не подвешивать интерфейс
-    QThreadPool::globalInstance()->start([self, jobCounter, path, jobId, mtimeSec, mtimeNsec, fileSize]() {
+    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("preview"))->start([self, jobCounter, path, jobId, mtimeSec, mtimeNsec, fileSize]() {
         if (!self || jobCounter->load() != jobId) return;
 
         std::error_code ec;
         if (!std::filesystem::exists(path, ec)) {
+            return;
+        }
+
+        // случай 1.9: PDF, страницы рендерит pdftoppm в фоновом пуле
+        if (Core::Search::isPdfFile(path)) {
+            const int pages = Core::Thumbnails::pdfPageCount(path);
+            if (!self || jobCounter->load() != jobId) return;
+            QMetaObject::invokeMethod(self.data(), [self, jobCounter, jobId, path, pages]() {
+                if (!self || jobCounter->load() != jobId) return;
+                self->startDocumentPreview(path, pages);
+            }, Qt::QueuedConnection);
             return;
         }
 
@@ -1880,23 +2044,17 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
         if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" ||
             ext == ".avif" || ext == ".bmp" || ext == ".gif" || ext == ".ico" || ext == ".svg") {
 
-            auto storeAndDisplay = [self, jobCounter, jobId, path, mtimeSec, mtimeNsec, fileSize](QImage img, const QString& info) {
+            auto storeAndDisplay = [self, jobCounter, jobId, path, mtimeSec, mtimeNsec, fileSize](
+                                       QImage img, const QSize& originalSize, const QString& info) {
                 if (!self) return;
-                QMetaObject::invokeMethod(self.data(), [self, jobCounter, jobId, path, mtimeSec, mtimeNsec, fileSize, img = std::move(img), info]() {
+                QMetaObject::invokeMethod(self.data(), [self, jobCounter, jobId, path, mtimeSec, mtimeNsec,
+                                                       fileSize, img = std::move(img), originalSize, info]() {
                     if (!self || jobCounter->load() != jobId) return;
-                    // обновляем LRU кэш (максимум 32 декодированных изображения, как в nautilus-image.c)
-                    for (auto it = self->m_imageCache.begin(); it != self->m_imageCache.end(); ++it) {
-                        if (it->path == path) {
-                            self->m_imageCache.erase(it);
-                            break;
-                        }
-                    }
-                    if (self->m_imageCache.size() >= 32) {
-                        self->m_imageCache.erase(self->m_imageCache.begin());
-                    }
-                    self->m_imageCache.push_back({path, mtimeSec, mtimeNsec, fileSize, img, info});
-                    self->displayImageImmediate(path, mtimeSec, mtimeNsec, fileSize, img, info);
+                    self->storeInImageCache({path, mtimeSec, mtimeNsec, fileSize, img, originalSize, info});
+                    self->displayImageImmediate(path, mtimeSec, mtimeNsec, fileSize, img, originalSize, info);
                 }, Qt::QueuedConnection);
+                // полный декод уже отмасштабирован и освобождён: возвращаем его страницы ядру
+                releaseDecodeBuffers();
             };
 
             if (ext == ".svg") {
@@ -1919,10 +2077,11 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
                         }, Qt::QueuedConnection);
                         return;
                     }
-                    QImage img(defSize, QImage::Format_ARGB32_Premultiplied);
+                    const QSize renderSize = boundedSize(defSize, kPreviewMaxSide);
+                    QImage img(renderSize, QImage::Format_ARGB32_Premultiplied);
                     img.fill(Qt::transparent);
                     QPainter p(&img);
-                    renderer.render(&p);
+                    renderer.render(&p, QRectF(QPointF(0, 0), QSizeF(renderSize)));
                     p.end();
 
                     uintmax_t sizeBytes = std::filesystem::file_size(path, ec);
@@ -1931,7 +2090,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
                                        .arg(defSize.width()).arg(defSize.height())
                                        .arg(Core::XdgUtils::formatSize(sizeBytes));
 
-                    storeAndDisplay(std::move(img), info);
+                    storeAndDisplay(std::move(img), defSize, info);
                     return;
                 }
             } else {
@@ -1954,21 +2113,82 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
                     }, Qt::QueuedConnection);
                     return;
                 }
+                const QSize decodeSize = boundedSize(origSize, kPreviewMaxSide);
+                if (decodeSize.isValid() && decodeSize != origSize) {
+                    reader.setScaledSize(decodeSize);
+                }
                 QImage img = reader.read();
 
                 if (!img.isNull()) {
+                    const QSize originalSize = origSize.isValid() ? origSize : img.size();
+                    // некоторые плагины игнорируют setScaledSize для подстраховки
+                    if (img.width() > kPreviewMaxSide || img.height() > kPreviewMaxSide) {
+                        img = img.scaled(boundedSize(img.size(), kPreviewMaxSide),
+                                         Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    }
                     uintmax_t sizeBytes = std::filesystem::file_size(path, ec);
                     if (ec) sizeBytes = 0;
                     QString info = QString("%1 \u00d7 %2 | %3 | %4")
-                                       .arg(origSize.isValid() ? origSize.width() : img.width())
-                                       .arg(origSize.isValid() ? origSize.height() : img.height())
+                                       .arg(originalSize.width())
+                                       .arg(originalSize.height())
                                        .arg(QString::fromStdString(reader.format().toUpper().toStdString()))
                                        .arg(Core::XdgUtils::formatSize(sizeBytes));
 
-                    storeAndDisplay(std::move(img), info);
+                    storeAndDisplay(std::move(img), originalSize, info);
                     return;
                 }
             }
+        }
+
+        // случай 2.5: видео, кадр через ffmpegthumbnailer/ffmpeg и дисковый кэш
+        if (Core::Search::isVideoFile(path)) {
+            std::error_code sizeEc;
+            const uintmax_t sizeBytes = std::filesystem::file_size(path, sizeEc);
+            QImage thumb = Core::Thumbnails::loadCached(path);
+            QString info;
+            QString error;
+            if (thumb.isNull()) {
+                auto rendered = Core::Thumbnails::renderVideo(path, 640);
+                thumb = rendered.image;
+                info = rendered.info;
+                error = rendered.error;
+            } else {
+                info = QStringLiteral("Video · cached");
+            }
+
+            if (thumb.isNull()) {
+                const QString fallback = QString(
+                    "\n  [VIDEO PREVIEW UNAVAILABLE]\n\n"
+                    "  Name: %1\n"
+                    "  Size: %2\n\n"
+                    "  %3\n\n"
+                    "  Install ffmpegthumbnailer or ffmpeg for a thumbnail.\n"
+                    "  Double-click or Enter to play via default player.")
+                    .arg(QString::fromUtf8(path.filename().c_str()))
+                    .arg(Core::XdgUtils::formatSize(sizeEc ? 0 : sizeBytes))
+                    .arg(error.isEmpty() ? QStringLiteral("No frame extracted") : error);
+                if (!self) return;
+                QMetaObject::invokeMethod(self.data(), [self, jobCounter, jobId, fallback]() {
+                    if (self && jobCounter->load() == jobId) {
+                        self->m_mediaViewer->setPlainText(fallback);
+                        self->m_stackedWidget->setCurrentIndex(PageMedia);
+                    }
+                }, Qt::QueuedConnection);
+                return;
+            }
+
+            if (info.isEmpty()) info = QStringLiteral("Video");
+            if (!self) return;
+            QMetaObject::invokeMethod(self.data(),
+                [self, jobCounter, jobId, path, mtimeSec, mtimeNsec, fileSize,
+                 thumb = std::move(thumb), info]() mutable {
+                if (!self || jobCounter->load() != jobId) return;
+                self->storeInImageCache(
+                    {path, mtimeSec, mtimeNsec, fileSize, thumb, thumb.size(), info});
+                self->displayImageImmediate(path, mtimeSec, mtimeNsec, fileSize,
+                                            thumb, thumb.size(), info);
+            }, Qt::QueuedConnection);
+            return;
         }
 
         // случай 3: медиафайл (аудио / видео)

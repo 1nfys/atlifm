@@ -1,13 +1,5 @@
 #!/bin/sh
-# создаёт atlifm-1.0.0-fixed.tar.gz из дерева исходников.
-#
-# использование: make-src-tarball.sh [SOURCE-ROOT] [OUTPUT-DIR] [VERSION]
-#   SOURCE-ROOT  дерево исходников (по умолчанию корень репозитория)
-#   OUTPUT-DIR   куда положить архив (по умолчанию <repo>/dist)
-#   VERSION      версия пакета (по умолчанию 1.0.0)
-#
-# внутри архива верхний каталог atlifm-<version>/, и в него попадают
-# только исходники проекта (packaging, .github и результаты сборки исключены).
+# упаковка исходников в архив без мусора и временных папок
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -15,7 +7,7 @@ proj=$(CDPATH= cd -- "$here/../.." && pwd)
 
 root=${1:-$proj}
 out=${2:-$proj/dist}
-version=${3:-${VERSION:-1.0.0}}
+version=${3:-${VERSION:-1.0.1}}
 
 name=atlifm-$version-fixed.tar.gz
 

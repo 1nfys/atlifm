@@ -16,6 +16,8 @@
 #include <QVector>
 #include <QPointer>
 
+namespace Core::Tools { class ProcessRunner; }
+
 namespace Models {
 
 struct FileItem {
@@ -70,8 +72,17 @@ public:
     void setDirectory(const std::filesystem::path& dirPath);
     const std::filesystem::path& currentDirectory() const { return m_currentDir; }
 
+    // панель превью не рисует размер/дату/права: не тратим на них statx и форматирование
+    void setLightweightScan(bool enabled) { m_lightweightScan = enabled; }
+    bool lightweightScan() const { return m_lightweightScan; }
+
     void setFilter(const QString& filter);
     const QString& filter() const { return m_filter; }
+
+    void searchEverywhere(const QString& query);
+    void searchContents(const QString& query);
+    void clearGlobalSearch();
+    bool globalSearchActive() const { return m_globalSearch; }
 
     void setShowHidden(bool show);
     bool showHidden() const { return m_showHidden; }
@@ -106,8 +117,8 @@ public:
     // скан читает его и не делает свой привилегированный вызов: pkexec спросил бы пароль второй раз
     void provideSudoListing(const std::filesystem::path& dir, const QString& findOutput);
 
-    // единая точка формата find -printf для обоих вызовов и тестов:
-    // \\0 это escape самого find, реальный байт NUL в argv невозможен (execve обревает аргумент)
+    // единая точка формата find с printf для обоих вызовов и тестов:
+    // экранированный ноль это escape самого find а реальный байт NUL в argv невозможен
     static QString findPrintfFormat();
 
     bool isLoading() const { return m_isLoading; }
@@ -117,22 +128,23 @@ signals:
     void loadingStarted();
     void loadingFinished(int totalCount);
     void directoryLoaded(const std::filesystem::path& dirPath);
+    void globalSearchFinished(int totalCount);
 
 private:
     void applyFilterAndSort();
+    void applyGlobalResults(std::vector<FileItem> items);
+    void stopGlobalProcess();
     // статическая: в пуле this не разыменовывается, модель может быть разрушена
     // посреди скана; QPointer используется только при доставке результата
     static void scanDirectoryAsync(std::filesystem::path dirPath, uint64_t scanId,
                                    std::shared_ptr<std::atomic<uint64_t>> scanCounter,
-                                   QPointer<FileSystemModel> self);
+                                   QPointer<FileSystemModel> self, bool lightweight);
 
-    // find даёт у каталогов вес записи, реальный вес (du -s -b)
-    // досчитывается в фоне и кэшируется
+    // find дает у каталогов вес записи а реальный вес du считается в фоне и кэшируется
     void ensureDirSizesForSort();
     void applyDirSizes(const QHash<QString, qulonglong>& sizes);
     qulonglong sortSizeOf(const FileItem& item) const;
-    // ключ сортировки по типу (mode 3): расширение в нижнем регистре
-    // без точки (".tar.gz" → "gz", у ".bashrc" пусто)
+    // ключ сортировки по типу: расширение в нижнем регистре без точки
     QString sortTypeOf(const FileItem& item) const;
     QHash<QString, qulonglong> m_dirSizeCache;
     QSet<QString> m_dirSizePending;
@@ -148,6 +160,11 @@ private:
     int m_sortMode{0}; // 0 = имя, 1 = размер, 2 = дата, 3 = тип
     bool m_sortAscending{true};
     bool m_showHidden{true};
+    bool m_lightweightScan{false};
+    bool m_globalSearch{false};
+    std::shared_ptr<std::atomic_bool> m_searchCancel;
+    Core::Tools::ProcessRunner* m_globalProcess{nullptr};
+    QSet<QString> m_globalSeen;
     std::atomic<bool> m_isLoading{false};
 
     std::vector<FileItem> m_allItems;

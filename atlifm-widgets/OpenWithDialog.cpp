@@ -1,6 +1,6 @@
 #include "OpenWithDialog.hpp"
-#include "TuiInputPopup.hpp"
 #include "../atlifm-theme/Theme.hpp"
+#include "../atlifm-core/Icons.hpp"
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QIcon>
@@ -8,7 +8,7 @@
 #include <QFrame>
 #include <QPainter>
 #include <QHBoxLayout>
-#include <QFileInfo>
+#include <QSet>
 #include <algorithm>
 
 namespace Widgets {
@@ -179,6 +179,22 @@ void OpenWithDialog::setFile(const std::filesystem::path& path) {
     m_fileLabel->setText(fname);
 
     m_apps = Core::XdgUtils::getAppsForFile(path);
+    // сразу все установленные программы, без отдельного пункта с папкой .desktop
+    QSet<QString> ids;
+    QSet<QString> names;
+    for (const auto& app : m_apps) {
+        ids.insert(app.id);
+        names.insert(app.name);
+    }
+    for (auto& app : Core::XdgUtils::getAllApps()) {
+        if (ids.contains(app.id) || names.contains(app.name)) continue;
+        ids.insert(app.id);
+        names.insert(app.name);
+        m_apps.push_back(std::move(app));
+    }
+    std::sort(m_apps.begin(), m_apps.end(), [](const Core::DesktopApp& a, const Core::DesktopApp& b) {
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
     m_defaultApp = Core::XdgUtils::getDefaultAppForFile(path);
 
     if (m_searchEdit) {
@@ -226,28 +242,22 @@ void OpenWithDialog::rebuildList() {
     }
 
     if (!addedDefault && otherCount == 0) {
-        auto* none = new QLabel(query.isEmpty() ? QStringLiteral("No registered applications")
+        auto* none = new QLabel(query.isEmpty() ? QStringLiteral("No applications found")
                                                  : QStringLiteral("No matches"), m_listContainer);
         none->setFont(Theme::getMonospaceFont(9));
         none->setStyleSheet(QString("color: %1; padding: 6px;").arg(Theme::Colors::Dim().name()));
         m_listLayout->addWidget(none);
     }
 
-    // custom: «Choose application…» выбор любого приложения с диска, даже без ассоциаций типа файла
-    if (addedDefault || otherCount > 0) m_listLayout->addSpacing(6);
-    m_listLayout->addWidget(makeSectionHeader(QStringLiteral("CUSTOM"), m_listContainer));
-    addRow(Core::DesktopApp{}, false, true);
-
     m_listLayout->addStretch(1);
 
     if (!m_rows.empty()) setSelected(0);
 }
 
-void OpenWithDialog::addRow(const Core::DesktopApp& app, bool isDefault, bool custom) {
+void OpenWithDialog::addRow(const Core::DesktopApp& app, bool isDefault) {
     AppRow row;
     row.app = app;
     row.isDefault = isDefault;
-    row.isCustom = custom;
     row.widget = new QWidget(m_listContainer);
     row.widget->setObjectName(QStringLiteral("appRow"));
     row.widget->setAttribute(Qt::WA_StyledBackground, true);
@@ -260,19 +270,21 @@ void OpenWithDialog::addRow(const Core::DesktopApp& app, bool isDefault, bool cu
     h->setSpacing(8);
 
     auto* iconLabel = new QLabel(row.widget);
-    QIcon ic;
-    if (custom) {
-        ic = QIcon::fromTheme(QStringLiteral("system-search"));
-        if (ic.isNull()) ic = QIcon::fromTheme(QStringLiteral("preferences-system"));
-    } else {
-        ic = QIcon::fromTheme(app.iconName);
-    }
+    QIcon ic = QIcon::fromTheme(app.iconName);
     if (ic.isNull()) ic = QIcon::fromTheme(QStringLiteral("application-x-executable"));
-    iconLabel->setPixmap(ic.pixmap(16, 16));
+    if (!ic.isNull()) {
+        iconLabel->setPixmap(ic.pixmap(16, 16));
+    } else {
+        // без темы иконок (QT_QPA_PLATFORMTHEME выключен) fromTheme всегда пустой:
+        // рисуем глиф nerd font чтобы строки не оставались без иконки
+        iconLabel->setText(Icons::Glyph::Executable);
+        iconLabel->setAlignment(Qt::AlignCenter);
+        iconLabel->setStyleSheet(QStringLiteral("color: %1;").arg(Theme::Colors::Dim().name()));
+    }
     iconLabel->setFixedSize(18, 18);
     h->addWidget(iconLabel);
 
-    QString name = custom ? QStringLiteral("Choose application…") : app.name;
+    QString name = app.name;
     if (isDefault) name += QStringLiteral("  (default)");
     auto* nameLabel = new QLabel(name.toHtmlEscaped(), row.widget);
     nameLabel->setFont(Theme::getMonospaceFont(9));
@@ -301,36 +313,7 @@ void OpenWithDialog::moveSelection(int delta) {
 
 void OpenWithDialog::activateSelected() {
     if (m_selected < 0 || m_selected >= int(m_rows.size())) return;
-    if (m_rows[m_selected].isCustom) {
-        // выбор файла приложения делает MainWindow своим FileChooserDialog
-        emit browseRequested();
-        return;
-    }
     launch(m_rows[m_selected].app);
-}
-
-bool OpenWithDialog::handleChosenApplication(const std::filesystem::path& p) {
-    if (p.empty()) return false;
-    const QString sel = QString::fromUtf8(p.c_str());
-
-    if (sel.endsWith(QStringLiteral(".desktop"), Qt::CaseInsensitive)) {
-        const Core::DesktopApp app = Core::XdgUtils::appFromFile(p);
-        if (app.execCommand.isEmpty()) {
-            TuiConfirmPopup::alert(this, QStringLiteral("Open With Error"),
-                                   QStringLiteral("Cannot read desktop entry: ") + QFileInfo(sel).fileName());
-            return false;
-        }
-        launch(app);
-        return true;
-    }
-
-    if (!QFileInfo(sel).isExecutable()) {
-        TuiConfirmPopup::alert(this, QStringLiteral("Open With Error"),
-                               QStringLiteral("Not an executable: ") + QFileInfo(sel).fileName());
-        return false;
-    }
-    launch(Core::XdgUtils::appFromFile(p));
-    return true;
 }
 
 void OpenWithDialog::launch(const Core::DesktopApp& app) {

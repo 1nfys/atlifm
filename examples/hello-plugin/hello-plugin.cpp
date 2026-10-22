@@ -1,19 +1,21 @@
-/* пример плагина atlifm (C ABI v1)
+/* atlifm example native plugin using C ABI version 1
  *
- * сборка из корня репозитория, заголовок лежит в atlifm-core/:
- *   c++ -shared -fPIC -Iatlifm-core -O2 -o hello.so examples/hello-plugin/hello-plugin.cpp
+ * build instructions:
+ * compile this file as a shared library targeting atlifm core headers
+ * for example using your c plus plus compiler with shared library options and output name hello.so
  *
- * установка:
- *   mkdir -p ~/.config/atlifm/plugins
- *   cp hello.so ~/.config/atlifm/plugins/
+ * installation instructions:
+ * copy the compiled hello.so library into the user plugins directory inside atlifm config folder
  *
- * при запуске плагин регистрирует:
- *   действие hello_banner: пункт меню Plugins, по умолчанию Ctrl+Alt+H
- *   override для properties: отказывается от обработки, дальше работает встроенное поведение
- *   preview для *.hello: первые строки файла текстом
- *   hook on_start: пишет строку в лог
+ * features demonstrated by this plugin:
+ * 1. hello_banner custom menu action inside plugins menu bound to Ctrl+Alt+H
+ * 2. properties action override returning zero which triggers fallback to default properties dialog
+ * 3. custom text preview renderer for hello files showing first few lines
+ * 4. startup lifecycle hook logging current working directory
  *
- * лог пишется в /tmp/atlifm-hello.log или по пути из ATLIFM_PLUGIN_LOG */
+ * log destination:
+ * logs are appended to temporary file atlifm_hello.log or path from ATLIFM_PLUGIN_LOG environment variable
+ */
 #include "atlifm-plugin-api.h"
 
 #include <cstdio>
@@ -59,7 +61,7 @@ int runBanner(const AtlifmInvocation* inv, void* user) {
 int overrideProperties(const AtlifmInvocation* inv, void*) {
     pluginLog("override hook: " + quote(inv->action) + " cwd=" + quote(inv->cwd) +
               " selection=" + std::to_string(inv->selection_count) + " -> fallback");
-    return 0; // не перехвачено: atlifm выполняет встроенный обработчик properties
+    return 0; // returning zero lets atlifm continue with builtin properties handler
 }
 
 void renderHello(const char* path, AtlifmWriteFn write, void* write_user, void*) {

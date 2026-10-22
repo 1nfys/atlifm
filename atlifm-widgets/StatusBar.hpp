@@ -9,6 +9,7 @@
 #include <QTimer>
 #include <QPointer>
 #include <QEventLoop>
+#include <QSet>
 #include <filesystem>
 
 class QHBoxLayout;
@@ -31,7 +32,13 @@ public:
     void addTrailingWidget(QWidget* widget);
     void setMountStats(const std::filesystem::path& path);
     void setFilterBuffer(const QString& filterText, bool isEditing = false);
+    void setFilterCommands(const QStringList& commands);
+    QString filterCommand() const { return m_filterCommand; }
+    QString filterQuery() const { return m_filterQuery; }
+    bool cancelFilterCommand();
     void setProgressMessage(const QString& msg, bool isFinished = true);
+    // агрегированный индикатор фоновых задач (TaskManager): "TASKS 2 · 45%"
+    void setTaskSummary(const QString& summary);
     void setSudoBadge(bool visible);
     bool isSudoBadgeVisible() const;
     void updateTheme();
@@ -58,7 +65,10 @@ public:
 
 signals:
     void pathEntered(const std::filesystem::path& path);
+    void networkLocationEntered(const QString& location);
     void filterChanged(const QString& filter);
+    void filterCommandChanged(const QString& token, const QString& query);
+    void filterSubmitted();
     void filterDismissed();
 
 protected:
@@ -71,6 +81,9 @@ private slots:
 
 private:
     void setupUi();
+    void handleFilterTextChanged(const QString& text);
+    void clearFilterCommand();
+    void updateFilterCommandLabel();
 
     QLabel* m_badgeLabel{nullptr};
     QLineEdit* m_pathInput{nullptr};
@@ -79,8 +92,13 @@ private:
     QFileSystemModel* m_completerModel{nullptr};
 
     QLabel* m_sudoBadgeLabel{nullptr};
+    QLabel* m_taskSummaryLabel{nullptr};
     QLabel* m_statusMessageLabel{nullptr};
+    QLabel* m_filterCommandLabel{nullptr};
     QLineEdit* m_filterInput{nullptr};
+    QString m_filterCommand;
+    QString m_filterQuery;
+    QSet<QString> m_filterCommands;
     QLabel* m_permsLabel{nullptr};
     QLabel* m_statsLabel{nullptr};
     QLabel* m_diskLabel{nullptr};

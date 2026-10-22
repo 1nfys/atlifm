@@ -1,13 +1,6 @@
 #!/bin/sh
-# собирает AppImage для atlifm под архитектуру хоста (aarch64 или x86_64).
-#
-# используется тулчейн linuxdeploy и linuxdeploy-plugin-qt; инструменты
-# скачиваются один раз в $APPIMAGE_TOOLS (по умолчанию <proj>/.appimage-tools).
-# FUSE не требуется: инструменты запускаются через APPIMAGE_EXTRACT_AND_RUN.
-#
-# использование: build-appimage.sh [SOURCE] [OUTPUT-DIR]
-#   SOURCE      каталог исходников или архив .tar.gz (по умолчанию корень репозитория)
-#   OUTPUT-DIR  куда писать AppImage (по умолчанию <proj>/dist)
+# сборка пакета appimage для текущей архитектуры
+# инструменты скачиваются в папку кэша и запускаются без fuse
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -15,7 +8,7 @@ proj=$(CDPATH= cd -- "$here/../.." && pwd)
 
 SRC=${1:-$proj}
 OUT=${2:-$proj/dist}
-VERSION=${VERSION:-1.0.0}
+VERSION=${VERSION:-1.0.1}
 ARCH=$(uname -m)
 TOOLS=${APPIMAGE_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/atlifm-appimage}
 
@@ -29,10 +22,7 @@ if [ -z "$QMAKE" ]; then
     exit 1
 fi
 
-# бандл должен работать на Wayland и в headless/CI окружении; на X11
-# плагин `xcb` подтягивается сам при сканировании зависимостей.
-# (разделитель ';' как в README linuxdeploy-plugin-qt, и запрашиваются
-# только плагины, существующие в локальной установке Qt.)
+# бандл для вейланда и иксов и запрашиваем только установленные плагины
 qt_plugins_dir=$("$QMAKE" -query QT_INSTALL_PLUGINS 2>/dev/null)/platforms
 extra_platforms=""
 for _p in libqwayland-egl.so libqwayland-generic.so libqoffscreen.so libqminimal.so; do
@@ -63,7 +53,7 @@ fetch_tool appimagetool \
 work=$(mktemp -d "${TMPDIR:-/tmp}/atlifm-appimage.XXXXXX")
 trap 'rm -rf "$work"' EXIT INT TERM
 
-# ---- распаковка ----
+# распаковка
 case "$SRC" in
     *.tar.gz|*.tgz|*.tar.xz)
         tarball=$SRC
@@ -84,7 +74,7 @@ if ! grep -q 'ENV{DESTDIR}' "$srcdir/CMakeLists.txt" 2>/dev/null; then
     exit 1
 fi
 
-# ---- сборка ----
+# сборка
 if command -v ninja >/dev/null 2>&1; then
     cmake -S "$srcdir" -B "$work/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 else
@@ -93,7 +83,7 @@ fi
 cmake --build "$work/build" --parallel "$(nproc 2>/dev/null || echo 2)"
 DESTDIR="$work/root" cmake --install "$work/build" --prefix /usr
 
-# ---- AppDir ----
+# подготовка каталога appdir
 appdir=$work/AppDir
 mkdir -p "$appdir"
 cp -a "$work/root/." "$appdir/"
@@ -104,12 +94,12 @@ install -Dm644 "$proj/packaging/common/atlifm.metainfo.xml" \
 install -Dm644 "$proj/packaging/common/atlifm.1" \
     "$appdir/usr/share/man/man1/atlifm.1"
 
-# иконка верхнего уровня, нужна по спецификации AppImage (максимум 512x512)
+# значок по спецификации appimage
 icon=$srcdir/atlifm-logo/icons/atlifm-512.png
 [ -f "$icon" ] || icon=$srcdir/atlifm-logo/icons/atlifm-256.png
 cp "$icon" "$appdir/atlifm.png"
 
-# ---- сборка Qt и упаковка AppImage ----
+# сборка плагинов qt и упаковка пакета
 "$TOOLS/linuxdeploy" --appdir "$appdir" --plugin qt \
     --desktop-file "$appdir/atlifm.desktop" \
     --icon-file "$appdir/atlifm.png"

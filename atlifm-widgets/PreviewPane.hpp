@@ -11,6 +11,7 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QTimer>
+#include <QSet>
 #include <filesystem>
 #include <atomic>
 #include <memory>
@@ -32,10 +33,11 @@ struct ConflictItem {
 
 class CodeEditorWithLineNumbers;
 class MillerListView;
-class ArchiveListView;
+class ArchiveTreeWidget;
 class FileItemDelegate;
 class InteractiveImageViewer;
 class ConflictResolverWidget;
+class DocumentViewer;
 
 class PreviewPane : public QWidget {
     Q_OBJECT
@@ -46,6 +48,15 @@ public:
 
     void previewPath(const std::filesystem::path& path);
     void clearPreview();
+    // фоновая предзагрузка соседних видео/PDF; не меняет текущую страницу
+    void prefetchPath(const std::filesystem::path& path);
+
+    bool archivePageActive() const;
+    void clearArchiveSelection();
+    void selectAllArchiveEntries();
+    void selectFirstArchiveEntry();
+    void selectLastArchiveEntry();
+    void copyArchiveSelection();
 
     // выбор варианта разрешения конфликтов в правой панели
     void showConflictResolver(const std::vector<ConflictItem>& items,
@@ -54,7 +65,11 @@ public:
 
 signals:
     void enterDirectoryRequested(const std::filesystem::path& path);
+    // архив из листинга превью открывается в центральной колонке, как папка
+    void archiveOpenRequested(const std::filesystem::path& path);
     void propertiesRequested(const std::filesystem::path& path);
+    void archiveSelectionInteractionStarted();
+    void messageRequested(const QString& message);
     // Open With… из меню папки в превью, полноразмерный диалог оверлеем в MainWindow
     void openWithDialogRequested(const std::filesystem::path& path);
     // Extract In… из меню папки в превью, архив фиксирован, каталог назначения выбирается оверлеем в MainWindow
@@ -84,7 +99,8 @@ private:
         PageHex = 4,
         PageMedia = 5,
         PageConflictResolver = 6,
-        PageArchive = 7
+        PageArchive = 7,
+        PageDocument = 8
     };
 
     void setupUi();
@@ -115,12 +131,20 @@ private:
     // просмотр метаданных медиа
     QPlainTextEdit* m_mediaViewer{nullptr};
 
-    // просмотр содержимого архива: интерактивный листинг, перетаскивание с распаковкой во временный кэш
+    // просмотр содержимого архива: раскрытое дерево, перетаскивание с распаковкой во временный кэш
     QWidget* m_archivePage{nullptr};
-    QLabel* m_archiveInfoLabel{nullptr};
-    ArchiveListView* m_archiveList{nullptr};
+    ArchiveTreeWidget* m_archiveTree{nullptr};
     Models::ArchiveModel* m_archiveModel{nullptr};
-    void updateArchiveInfo();
+
+    // PDF: постраничный просмотр, страницы рендерятся по мере прокрутки
+    DocumentViewer* m_documentViewer{nullptr};
+    std::filesystem::path m_documentPath;
+    std::shared_ptr<std::atomic_bool> m_documentCancel;
+    int m_documentGeneration{0};
+    int m_documentPages{-1};
+    void startDocumentPreview(const std::filesystem::path& path, int pageCount);
+    void requestDocumentPage(int page);
+    void resetDocumentPreview();
 
     // виджет разрешения конфликтов
     ConflictResolverWidget* m_conflictResolver{nullptr};
@@ -130,14 +154,16 @@ private:
         int64_t mtimeSec{0};
         int64_t mtimeNsec{0};
         uintmax_t fileSize{0};
-        QImage image;
+        QImage image;          // уменьшенная копия для кэша а не полный размер
+        QSize originalSize;    // размер исходника, для догрузки при зуме
         QString info;
     };
 
     void performClearNow();
+    void storeInImageCache(CachedImageEntry entry);
     void displayImageImmediate(const std::filesystem::path& path,
                                int64_t mtimeSec, int64_t mtimeNsec, uintmax_t fileSize,
-                               const QImage& img, const QString& info);
+                               const QImage& img, const QSize& originalSize, const QString& info);
 
     // состояние воркера для асинхронной загрузки (shared_ptr, чтобы фоновые воркеры безопасно переживали PreviewPane)
     std::filesystem::path m_activePath;
@@ -153,6 +179,9 @@ private:
     std::filesystem::path m_pendingPath;
     bool m_hasPending{false};
     bool m_pendingClear{false};
+
+    // видео/PDF: до двух фоновых предзагрузок соседних элементов
+    QSet<QString> m_prefetchInFlight;
 };
 
 }

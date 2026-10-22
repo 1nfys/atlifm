@@ -30,17 +30,20 @@ struct Plugin {
     QString description;
     QString sourceFile;
     QString action;
+    QString command;
+    QString commandTitle;
+    QString commandDescription;
+    QString commandMode;
+    QString commandPlaceholder;
     QStringList keys;
     QStringList overrides;
     QStringList hooks;
     QStringList rejected;
-    // нативный in-process плагин: исполняется NativePluginHost'ом, не QProcess
+    // нативный плагин выполняется внутри процесса а не через отдельный процесс
     bool native{false};
 };
 
-// поставщик манифестов нативных плагинов, ставится widgets-слоем (Core не
-// знает о загрузчике .so); load() подмешивает записи, а overrideFor/
-// previewPluginFor/triggerHook их пропускают
+// манифесты нативных плагинов прокидываются из слоя виджетов
 using NativeManifestProvider = std::function<std::vector<Plugin>()>;
 
 inline NativeManifestProvider& nativeManifestProvider() {
@@ -67,6 +70,17 @@ inline bool isValidActionId(const QString& id) {
 
 inline bool isProtectedActionId(const QString& id) {
     return id.contains(QLatin1String("sudo"), Qt::CaseInsensitive);
+}
+
+inline bool isValidCommandToken(const QString& token) {
+    if (token.isEmpty()) return false;
+    const QChar first = token.at(0);
+    if (!first.isLetter()) return false;
+    for (const QChar c : token) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('_') && c != QLatin1Char('-'))
+            return false;
+    }
+    return true;
 }
 
 inline QString configDir() {
@@ -109,6 +123,11 @@ inline bool parsePluginFile(const QString& path, Plugin* out) {
                            val == "1" || val.compare("yes", Qt::CaseInsensitive) == 0);
         else if (key == "description") out->description = val;
         else if (key == "action") out->action = val.trimmed().toLower();
+        else if (key == "command" || key == "prefix") out->command = val.trimmed().toLower();
+        else if (key == "command_title") out->commandTitle = val;
+        else if (key == "command_description") out->commandDescription = val;
+        else if (key == "command_mode") out->commandMode = val.trimmed().toLower();
+        else if (key == "command_placeholder") out->commandPlaceholder = val;
         else if (key == "keys") out->keys.append(val);
         else if (key == "hook" || key == "hooks") {
             for (const QString& raw : val.split(',', Qt::SkipEmptyParts))
@@ -139,6 +158,21 @@ inline bool parsePluginFile(const QString& path, Plugin* out) {
             out->rejected.append(QStringLiteral("action:%1 (invalid id)").arg(out->action));
             out->action.clear();
         }
+    }
+    if (!out->command.isEmpty()) {
+        if (!isValidCommandToken(out->command)) {
+            out->rejected.append(QStringLiteral("command:%1 (invalid token)").arg(out->command));
+            out->command.clear();
+        } else if (out->command == QLatin1String("fd") ||
+                   out->command == QLatin1String("rg")) {
+            out->rejected.append(QStringLiteral("command:%1 (reserved)").arg(out->command));
+            out->command.clear();
+        }
+    }
+    if (out->commandMode.isEmpty()) out->commandMode = QStringLiteral("action");
+    if (out->commandMode != QLatin1String("query") &&
+        out->commandMode != QLatin1String("action")) {
+        out->commandMode = QStringLiteral("action");
     }
     {
         QStringList kept;
@@ -196,8 +230,7 @@ inline std::vector<Plugin> load() {
     if (nativeProvider) {
         std::vector<Plugin> nativePlugins = nativeProvider();
         for (Plugin& p : nativePlugins) {
-            // .conf/.sh с тем же именем имеет приоритет (как у скриптов),
-            // действия одного плагина делят id
+            // конфиги и скрипты с тем же именем имеют приоритет перед нативными библиотеками
             bool shadowed = false;
             for (const Plugin& q : plugins)
                 if (!q.native && q.id == p.id) { shadowed = true; break; }
@@ -264,7 +297,9 @@ inline Plugin previewPluginFor(const std::filesystem::path& path) {
     return Plugin{};
 }
 
-inline QProcessEnvironment pluginEnvironment(const QString& cwd, const QStringList& paths, const QString& action = QString()) {
+inline QProcessEnvironment pluginEnvironment(const QString& cwd, const QStringList& paths,
+                                             const QString& action = QString(),
+                                             const QString& query = QString()) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("ATLIFM_DIR"), cwd);
     env.insert(QStringLiteral("ATLIFM_SELECTION"), paths.join(QLatin1Char('\n')));
@@ -274,11 +309,13 @@ inline QProcessEnvironment pluginEnvironment(const QString& cwd, const QStringLi
     if (!action.isEmpty()) {
         env.insert(QStringLiteral("ATLIFM_ACTION"), action);
     }
+    env.insert(QStringLiteral("ATLIFM_QUERY"), query);
     return env;
 }
 
 inline QProcess* spawn(const Plugin& plugin, const QStringList& paths,
-                       const QString& cwd, QObject* parent, QString* errorOut = nullptr) {
+                       const QString& cwd, QObject* parent, QString* errorOut = nullptr,
+                       const QString& query = QString()) {
     const QStringList parts = QProcess::splitCommand(plugin.exec);
     if (parts.isEmpty()) {
         if (errorOut) *errorOut = QStringLiteral("empty Exec");
@@ -286,9 +323,12 @@ inline QProcess* spawn(const Plugin& plugin, const QStringList& paths,
     }
     auto* proc = new QProcess(parent);
     proc->setProgram(parts.first());
-    proc->setArguments(parts.mid(1) + paths);
+    QStringList arguments = parts.mid(1);
+    if (!query.isEmpty()) arguments << query;
+    arguments << paths;
+    proc->setArguments(arguments);
     proc->setWorkingDirectory(cwd);
-    proc->setProcessEnvironment(pluginEnvironment(cwd, paths, plugin.action));
+    proc->setProcessEnvironment(pluginEnvironment(cwd, paths, plugin.action, query));
     proc->setProcessChannelMode(QProcess::MergedChannels);
     proc->start();
     if (!proc->waitForStarted(3000)) {
@@ -301,7 +341,8 @@ inline QProcess* spawn(const Plugin& plugin, const QStringList& paths,
 }
 
 inline bool spawnDetached(const Plugin& plugin, const QStringList& paths,
-                          const QString& cwd, QString* errorOut = nullptr) {
+                          const QString& cwd, QString* errorOut = nullptr,
+                          const QString& query = QString()) {
     const QStringList parts = QProcess::splitCommand(plugin.exec);
     if (parts.isEmpty()) {
         if (errorOut) *errorOut = QStringLiteral("empty Exec");
@@ -309,9 +350,12 @@ inline bool spawnDetached(const Plugin& plugin, const QStringList& paths,
     }
     QProcess proc;
     proc.setProgram(parts.first());
-    proc.setArguments(parts.mid(1) + paths);
+    QStringList arguments = parts.mid(1);
+    if (!query.isEmpty()) arguments << query;
+    arguments << paths;
+    proc.setArguments(arguments);
     proc.setWorkingDirectory(cwd);
-    proc.setProcessEnvironment(pluginEnvironment(cwd, paths, plugin.action));
+    proc.setProcessEnvironment(pluginEnvironment(cwd, paths, plugin.action, query));
     qint64 pid = 0;
     const bool ok = proc.startDetached(&pid);
     if (!ok && errorOut)

@@ -4,7 +4,9 @@
 #include "../atlifm-widgets/TuiInputPopup.hpp"
 #include "../atlifm-theme/Theme.hpp"
 #include "../atlifm-core/XdgUtils.hpp"
+#include "../atlifm-core/Icons.hpp"
 #include "../atlifm-core/UndoManager.hpp"
+#include "../atlifm-core/tasks/TaskManager.hpp"
 #include "../atlifm-widgets/MillerColumns.hpp"
 #include <QMenu>
 #include <QPainter>
@@ -33,7 +35,7 @@ namespace Dnd {
 static std::shared_ptr<std::atomic<bool>> s_cancelToken;
 static std::mutex s_opMutex;
 
-// MIME текст может приходить в UTF-16 (в стиле Windows) или UTF-8
+// mime текст может приходить в utf16 или utf8
 static QString decodeMimeText(const QByteArray& d) {
     return (d.size() >= 2 && d[1] == '\0')
         ? QString::fromUtf16(reinterpret_cast<const char16_t*>(d.constData()), d.size() / 2)
@@ -50,7 +52,8 @@ static void postStatusMessage(QWidget* ctx, const QString& msg, bool final) {
 }
 
 // каталоги считаем рекурсивно, иначе бар висит на 100%
-static uintmax_t contentSizeBytes(const std::filesystem::path& p) {
+static uintmax_t contentSizeBytes(const std::filesystem::path& p,
+                                  const std::shared_ptr<std::atomic<bool>>& cancelToken = {}) {
     std::error_code ec;
     if (std::filesystem::is_regular_file(p, ec)) return std::filesystem::file_size(p, ec);
     if (!std::filesystem::is_directory(p, ec)) return 0;
@@ -59,6 +62,7 @@ static uintmax_t contentSizeBytes(const std::filesystem::path& p) {
         p, std::filesystem::directory_options::skip_permission_denied, ec);
     const std::filesystem::recursive_directory_iterator end;
     while (!ec && it != end) {
+        if (cancelToken && cancelToken->load()) break;
         if (it->is_regular_file(ec)) {
             total += it->file_size(ec);
         }
@@ -141,11 +145,11 @@ QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& pat
         }
     }
 
-    // стандартный RFC 2483 text/uri-list + FileTransfer из портала XDG (используется Chrome, Firefox, Electron, Wayland/X11)
+    // стандартный uri list и file transfer из портала xdg для браузеров и приложений
     mimeData->setUrls(urls);
     // совместимость с GTK / Nautilus / Thunar / Nemo
     mimeData->setData("x-special/gnome-copied-files", gnomeCopiedData.trimmed());
-    // совместимость с Gecko / Firefox / Zen Browser (url\nname в UTF-16)
+    // совместимость с браузерами где url и имя в utf16
     if (!mozUrlText.isEmpty()) {
         QByteArray mozBytes(reinterpret_cast<const char*>(mozUrlText.utf16()), mozUrlText.size() * 2);
         mimeData->setData("text/x-moz-url", mozBytes);
@@ -167,9 +171,11 @@ QPixmap DragDropHandler::createDragPixmap(size_t itemCount, const QString& first
 
     QString badgeText;
     if (itemCount == 1) {
-        badgeText = QString("📄 %1").arg(firstItemName);
+        badgeText = QStringLiteral("%1 %2").arg(Icons::Glyph::FileDefault, firstItemName);
     } else {
-        badgeText = QString("📄 %1 (+%2 items)").arg(firstItemName).arg(itemCount - 1);
+        badgeText = QStringLiteral("%1 %2 (+%3 items)")
+                        .arg(Icons::Glyph::FileDefault, firstItemName)
+                        .arg(itemCount - 1);
     }
 
     int textWidth = fm.horizontalAdvance(badgeText);
@@ -676,7 +682,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
         DownloadFormat chosenFormat = DownloadFormat::BestVideo;
         bool isDirectFileUrl = false;
 
-        // прямой файл по расширению качаем через curl сразу, меню yt-dlp
+        // прямой файл по расширению качаем через curl сразу а меню yt dlp
         // только для страниц видеохостингов и url без расширения файла
         {
             QUrl u(remoteUrlStr);
@@ -750,12 +756,12 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
 
         postStatusMessage(safeParent.data(), "Downloading...", true);
 
-        QThreadPool::globalInstance()->start([remoteUrlStr, targetDir, stem, hintExt, chosenFormat, safeParent, onFinished]() {
+        Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("io"))->start([remoteUrlStr, targetDir, stem, hintExt, chosenFormat, safeParent, onFinished]() {
             bool ok = false;
             std::filesystem::path finalDest;
             QString targetDirQ = QString::fromUtf8(targetDir.c_str());
 
-                // 1. сначала yt-dlp, если он выбран
+                // сначала yt dlp если он выбран
             if (chosenFormat != DownloadFormat::DirectCurl) {
                 QStringList ytdlpArgs = {"-P", targetDirQ, "--no-playlist", "--no-warnings", "--print", "after_move:filepath"};
                 if (chosenFormat == DownloadFormat::BestVideo) {
@@ -789,7 +795,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
                 }
             }
 
-            // 2. запасной вариант curl / wget, если yt-dlp не сработал или выбрана прямая загрузка
+            // запасной вариант curl или wget если yt dlp не сработал или выбрана прямая загрузка
             if (!ok) {
                 std::string dlExt = hintExt;
                 if (dlExt.empty()) {
@@ -945,37 +951,33 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
             Models::FileSystemModel::addInProgressPath(dest);
         }
 
-        uintmax_t totalBytes = 0;
-        for (const auto& [src, _] : itemsToProcess) {
-            totalBytes += contentSizeBytes(src);
-        }
-
-        QThreadPool::globalInstance()->start([items = itemsToProcess, chosenAction, safeParent, onFinished, totalBytes, cancelToken]() {
+        const QString opName = (chosenAction == ActCopy) ? QStringLiteral("Copy")
+                             : (chosenAction == ActMove) ? QStringLiteral("Move")
+                                                         : QStringLiteral("Create link");
+        Core::Tasks::TaskManager::instance().submit(
+            QString("%1 %2 item(s)").arg(opName).arg(itemsToProcess.size()),
+            QStringLiteral("io"),
+            [items = itemsToProcess, chosenAction, safeParent, onFinished, cancelToken](Core::Tasks::TaskContext& ctx) {
+            // обход дерева для подсчета размера это тоже нагрузка поэтому считаем в воркере,
+            // иначе первый кадр задачи блокирует UI на большом каталоге.
+            uintmax_t totalBytes = 0;
+            std::vector<uintmax_t> itemBytes(items.size(), 0);
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (ctx.cancelled()) break;
+                itemBytes[i] = contentSizeBytes(items[i].first, cancelToken);
+                totalBytes += itemBytes[i];
+            }
+            ctx.progress(0, static_cast<qint64>(totalBytes));
             std::vector<Core::UndoItem> undoItems;
-            int count = 0;
             QString lastErr;
             std::filesystem::path firstDest;
             uintmax_t overallCopiedBytes = 0;
-            const auto startTime = std::chrono::steady_clock::now();
-            auto lastProgress = startTime - std::chrono::milliseconds(120);
             auto progressMessage = [&](uintmax_t doneBytes) {
-                auto now = std::chrono::steady_clock::now();
-                if (now - startTime < std::chrono::milliseconds(1500)) {
-                    return;
-                }
-                int pct = totalBytes > 0
-                    ? std::clamp(static_cast<int>(doneBytes * 100 / totalBytes), 0, 100)
-                    : static_cast<int>(count * 100 / std::max<size_t>(1, items.size()));
-                int filled = (pct * 8) / 100;
-                QString bar = QString(filled, QChar(0x2588)) + QString(8 - filled, QChar(0x2591));
-                QString progMsg = QString("%1 [%2] %3%").arg(chosenAction == ActCopy ? "Copy" : "Move", bar).arg(pct);
-                QMetaObject::invokeMethod(qApp, [progMsg]() {
-                    postStatusMessage(nullptr, progMsg, false);
-                }, Qt::QueuedConnection);
+                ctx.progress(static_cast<qint64>(doneBytes), static_cast<qint64>(totalBytes));
             };
 
             for (size_t i = 0; i < items.size(); ++i) {
-                if (cancelToken->load()) break;
+                if (ctx.cancelled() || cancelToken->load()) break;
                 const auto& [src, dest] = items[i];
                 if (src == dest && chosenAction != ActCopy) continue;
                 if (firstDest.empty()) firstDest = dest;
@@ -988,10 +990,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 }
 
                 auto progressCb = [&](uintmax_t itemCopied, uintmax_t /*itemTotal*/) {
-                    if (cancelToken->load()) return;
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - lastProgress < std::chrono::milliseconds(120)) return;
-                    lastProgress = now;
+                    if (ctx.cancelled() || cancelToken->load()) return;
                     progressMessage(overallCopiedBytes + itemCopied);
                 };
 
@@ -999,31 +998,27 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 if (chosenAction == ActCopy) {
                     ok = Core::XdgUtils::copyItem(src, dest, err, progressCb, cancelToken);
                 } else if (chosenAction == ActMove) {
-                    ok = Core::XdgUtils::moveItem(src, dest, err);
+                    ok = Core::XdgUtils::moveItem(src, dest, err, progressCb, cancelToken);
                 } else if (chosenAction == ActSymlink) {
                     ok = Core::XdgUtils::createSymlink(src, dest, err);
                 }
 
-                if (cancelToken->load()) break;
+                if (ctx.cancelled() || cancelToken->load()) break;
 
                 if (ok) {
                     // локальный undoItems полный список и для undo, и для отката отмены
                     // (включая элементы, докатившиеся после cancel)
                     undoItems.push_back({src, dest, backup});
-                    count++;
-                    overallCopiedBytes += contentSizeBytes(src);
+                    overallCopiedBytes += itemBytes[i];
                 } else {
                     if (!backup.empty()) {
                         Core::restoreFromUndo(backup, dest);
                     }
                     lastErr = err;
+                    ctx.log(QString("%1: %2").arg(QString::fromUtf8(src.c_str()), err));
                 }
 
-                auto now = std::chrono::steady_clock::now();
-                if (now - lastProgress >= std::chrono::milliseconds(120)) {
-                    lastProgress = now;
-                    progressMessage(overallCopiedBytes);
-                }
+                ctx.progress(static_cast<qint64>(overallCopiedBytes), static_cast<qint64>(totalBytes));
             }
 
             for (const auto& [src, dest] : items) {
@@ -1031,11 +1026,13 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 Models::FileSystemModel::removeInProgressPath(dest);
             }
 
-            const bool wasCancelled = cancelToken->load();
+            const bool wasCancelled = ctx.cancelled() || cancelToken->load();
             if (wasCancelled) {
                 // откат выполняет воркер: undoItems полный список завершённых,
                 // токен ещё жив и новая операция не стартует до конца отката
                 rollbackCompletedItems(undoItems);
+            } else if (!lastErr.isEmpty()) {
+                ctx.fail(lastErr);
             }
 
             {
@@ -1044,6 +1041,16 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 // s_cancelToken уже лежит свой токен
                 if (s_cancelToken == cancelToken) {
                     s_cancelToken.reset();
+                }
+            }
+
+            if (!wasCancelled && !undoItems.empty()) {
+                if (chosenAction == ActCopy) {
+                    Core::UndoManager::instance().recordMultiCopy(undoItems, "Copy");
+                } else if (chosenAction == ActMove) {
+                    Core::UndoManager::instance().recordMultiMove(undoItems, "Move");
+                } else if (chosenAction == ActSymlink) {
+                    Core::UndoManager::instance().recordMultiCreate(undoItems, "Create");
                 }
             }
 
@@ -1061,16 +1068,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
 
             const bool hadError = !lastErr.isEmpty();
 
-            QMetaObject::invokeMethod(qApp, [safeParent, onFinished, firstDest, chosenAction, undoItems = std::move(undoItems), lastErr, hadError]() {
-                if (!undoItems.empty()) {
-                    if (chosenAction == ActCopy) {
-                        Core::UndoManager::instance().recordMultiCopy(undoItems, "Copy");
-                    } else if (chosenAction == ActMove) {
-                        Core::UndoManager::instance().recordMultiMove(undoItems, "Move");
-                    } else if (chosenAction == ActSymlink) {
-                        Core::UndoManager::instance().recordMultiCreate(undoItems, "Create");
-                    }
-                }
+            QMetaObject::invokeMethod(qApp, [safeParent, onFinished, firstDest, chosenAction, lastErr, hadError]() {
                 if (safeParent) {
                     if (auto* mvc = qobject_cast<Widgets::MillerViewContainer*>(safeParent.data())) {
                         if (!hadError && !firstDest.empty()) {
@@ -1100,7 +1098,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 QString msg = (chosenAction == ActCopy) ? "Copy" : ((chosenAction == ActMove) ? "Move" : "Create");
                 postStatusMessage(safeParent.data(), msg, true);
             }, Qt::QueuedConnection);
-        });
+        }, 0, cancelToken, QStringLiteral("bytes"));
     };
 
     // разделяем элементы на неконфликтующие и конфликтующие

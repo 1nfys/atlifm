@@ -1,13 +1,13 @@
-/* atlifm-plugin-api.h: C ABI нативных in-process плагинов atlifm, версия 1.
+/* atlifm plugin api providing C ABI version 1 for native plugins
  *
- * плагин это *.so в ~/.config/atlifm/plugins/, экспортирующий
- * atlifm_plugin_init; хост грузит через dlopen и передаёт AtlifmHostApi,
- * регистрации только во время init, потом таблица неизменна.
+ * plugins are shared objects inside user config plugins directory exporting atlifm_plugin_init
+ * the host loads them via dlopen and supplies the AtlifmHostApi structure
+ * registrations occur strictly during initialization after which the table is sealed
  *
- * потоки: run/override/hook в GUI потоке, render превью в рабочем потоке
- * (Qt thread pool), там только write и своя логика, остальные вызовы
- * хоста запрещены. идентификаторы с "sudo" перехвату не подлежат,
- * sudo/polkit/portal вообще не проходят через диспетчер плагинов. */
+ * threading model:
+ * run and override and hook execute in the GUI thread
+ * preview render runs in a worker thread pool where only write and custom logic are permitted
+ * identifiers with sudo are protected and bypass plugin dispatch entirely */
 #ifndef ATLIFM_PLUGIN_API_H
 #define ATLIFM_PLUGIN_API_H
 
@@ -22,8 +22,8 @@ extern "C" {
 
 typedef struct AtlifmHostApi AtlifmHostApi;
 
-/* контекст вызова: event (hook), action (id действия/override), cwd и
- * выделенные пути. Строки в UTF-8, живут только на время вызова */
+/* invocation context containing event name and action id and cwd and selected paths
+ * all strings are UTF8 and remain valid only during this call */
 typedef struct AtlifmInvocation {
     uint32_t struct_size;
     const char* event;
@@ -31,16 +31,16 @@ typedef struct AtlifmInvocation {
     const char* cwd;
     const char* const* selection;
     size_t selection_count;
+    const char* query;
 } AtlifmInvocation;
 
-/* приёмник текста: preview передаёт сюда куски вывода (write_user это
- * указатель из регистрации) */
+/* text sink where preview implementations stream chunks of output data */
 typedef void (*AtlifmWriteFn)(void* write_user, const char* data, size_t len);
 
-/* описание действия (пункт меню Plugins + биндинг через Keys):
- * id обязателен [a-z0-9_], первая буква; name подпись в меню;
- * applies_to "any"/"files"/"dirs", extensions ".md,.log" (файлы);
- * enabled опционален, <=0 скрывает пункт; run: 0 успех */
+/* action descriptor defining custom menu entries and key bindings
+ * id must start with a letter and contain only alphanumeric characters or underscores
+ * applies_to accepts any or files or dirs while extensions lists matching file extensions
+ * enabled is optional where non positive value hides the action and run returns 0 on success */
 typedef struct AtlifmActionDesc {
     uint32_t struct_size;
     const char* id;
@@ -52,19 +52,23 @@ typedef struct AtlifmActionDesc {
     void* user;
     int (*run)(const AtlifmInvocation* inv, void* user);
     int (*enabled)(const AtlifmInvocation* inv, void* user);
+    const char* command;
+    const char* command_mode;
+    const char* command_title;
+    const char* command_description;
+    const char* command_placeholder;
 } AtlifmActionDesc;
 
-/* override: 1 событие обработано, 0 откат к следующему плагину или
- * встроенному поведению. Перехватываются все действия atlifm
- * (клавиши, меню, мышь), кроме sudo/polkit/portal */
+/* override handler returning 1 if event was handled or 0 to trigger fallback
+ * intercepts actions triggered by keys or menus or mouse except privileged sudo commands */
 typedef int (*AtlifmOverrideFn)(const AtlifmInvocation* inv, void* user);
 
-/* preview: render получает путь файла и write для текста; пустой вывод
- * это откат к встроенному превью. extensions обязательны */
+/* preview renderer receiving target file path and write callback for text
+ * empty output signals fallback to builtin preview and extensions are mandatory */
 typedef void (*AtlifmPreviewFn)(const char* path, AtlifmWriteFn write,
                                 void* write_user, void* user);
 
-/* hook: события on_start / on_navigate / on_select */
+/* lifecycle hooks triggered on start and navigate and select events */
 typedef void (*AtlifmHookFn)(const AtlifmInvocation* inv, void* user);
 
 struct AtlifmHostApi {
@@ -72,15 +76,13 @@ struct AtlifmHostApi {
     uint32_t struct_size;
 
     const char* (*host_version)(void);
-    /* текст в оверлей текущего действия (нижний правый угол), доступно
-     * в run/override, в hook оверлея нет */
+    /* writes text to action output overlay, or to the center pane of a Ctrl+F command output */
     void (*output_write)(const char* text);
-    /* короткое сообщение в статусбар */
+    /* displays short message inside status bar */
     void (*notify)(const char* message);
-    /* запуск внешней команды: detach=1 отдельный процесс, detach=0 вывод
-     * стримится в оверлей действия; 0 ok */
+    /* launches external command where detach 1 runs background process and detach 0 streams output to the same sink as output_write */
     int (*run_command)(const char* command_line, int detach);
-    /* перечитать списки файлов и закладки после изменений на диске */
+    /* refreshes file listings and bookmarks after disk modifications */
     void (*refresh)(void);
 
     int (*register_action)(const AtlifmActionDesc* desc);
@@ -88,10 +90,13 @@ struct AtlifmHostApi {
     int (*register_preview)(const char* extensions, AtlifmPreviewFn render, void* user);
     int (*register_hook)(const char* event, AtlifmHookFn fn, void* user);
     void (*log)(const char* level, const char* message);
+    /* writes text to one pane of the three-pane command output: 0 parent, 1 center, 2 preview
+     * the first call opens the pane view; UTF-8 text is appended as is */
+    void (*output_write_pane)(int pane, const char* text);
 };
 
-/* init вернуть 0 при успехе; при несовпадении api->abi_version abort и
- * не загружать; shutdown опционален */
+/* initialization entrypoint returning 0 on success or failing if abi_version mismatches
+ * shutdown is optional */
 int atlifm_plugin_init(const AtlifmHostApi* api);
 void atlifm_plugin_shutdown(void);
 

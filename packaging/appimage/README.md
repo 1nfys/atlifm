@@ -4,7 +4,7 @@ an appimage is a self-contained bundle that must be (re)built on the target mach
 
 ```sh
 sh ../scripts/build-appimage.sh   # builds from the repository source tree
-sh ../scripts/build-appimage.sh /path/to/atlifm-1.0.0-fixed.tar.gz /path/to/dist
+sh ../scripts/build-appimage.sh /path/to/atlifm-1.0.1-fixed.tar.gz /path/to/dist
 ```
 
 what the script does:
@@ -21,4 +21,4 @@ the helper tools are downloaded once into
 `${XDG_CACHE_HOME:-$HOME/.cache}/atlifm-appimage`; FUSE is not required
 (the tools run with `APPIMAGE_EXTRACT_AND_RUN=1`).
 
-to use the bundle: `chmod +x atlifm-1.0.0-<arch>.AppImage` and run it; nothing is installed into the system. the CI workflow builds bundles for aarch64 and x86_64; attach them to a GitHub Release to distribute.
+to use the bundle: `chmod +x atlifm-1.0.1-<arch>.AppImage` and run it; nothing is installed into the system. the CI workflow builds bundles for aarch64 and x86_64; attach them to a GitHub Release to distribute.

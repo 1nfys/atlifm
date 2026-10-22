@@ -33,7 +33,7 @@ private:
     QPlainTextEdit* m_view{nullptr};
     QPushButton* m_close{nullptr};
     bool m_running{false};
-    // хвост неполной строки: чанки QProcess могут рвать utf-8 и строки
+    // хвост неполной строки: чанки процесса могут рвать utf8 и строки
     QByteArray m_pending;
 };
 

@@ -26,14 +26,8 @@ public:
     void setFile(const std::filesystem::path& path);
     void updateTheme();
 
-    // *.desktop (разбор Desktop Entry) или исполняемый файл запускаются напрямую,
-    // иначе TUI алерт и false; вызывается MainWindow по сигналу FileChooserDialog::fileChosen
-    bool handleChosenApplication(const std::filesystem::path& path);
-
 signals:
     void closeRequested();
-    // «Choose application…»: MainWindow открывает свой FileChooserDialog вместо системного QFileDialog
-    void browseRequested();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -44,12 +38,11 @@ private:
         QWidget* widget{nullptr};
         Core::DesktopApp app;
         bool isDefault{false};
-        bool isCustom{false}; // «Choose application…» браузер вместо запуска
     };
 
     void setupUi();
     void rebuildList();
-    void addRow(const Core::DesktopApp& app, bool isDefault, bool custom = false);
+    void addRow(const Core::DesktopApp& app, bool isDefault);
     void setSelected(int index);
     void moveSelection(int delta);
     void activateSelected();
