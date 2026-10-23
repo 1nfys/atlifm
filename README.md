@@ -247,19 +247,21 @@ sudo zypper install atlifm
 
 ```bash
 # debian 13
-echo 'deb https://download.opensuse.org/repositories/home:/1nfys/Debian_13/ /' \
-  | sudo tee /etc/apt/sources.list.d/atlifm.list
+sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://download.opensuse.org/repositories/home:/1nfys/Debian_13/Release.key \
-  | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/atlifm.gpg > /dev/null
+  | gpg --dearmor | sudo tee /etc/apt/keyrings/home_1nfys.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/home_1nfys.gpg] https://download.opensuse.org/repositories/home:/1nfys/Debian_13/ /' \
+  | sudo tee /etc/apt/sources.list.d/atlifm.list
 sudo apt update && sudo apt install atlifm
 ```
 
 ```bash
 # ubuntu 26.04
-echo 'deb https://download.opensuse.org/repositories/home:/1nfys/xUbuntu_26.04/ /' \
-  | sudo tee /etc/apt/sources.list.d/atlifm.list
+sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://download.opensuse.org/repositories/home:/1nfys/xUbuntu_26.04/Release.key \
-  | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/atlifm.gpg > /dev/null
+  | gpg --dearmor | sudo tee /etc/apt/keyrings/home_1nfys.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/home_1nfys.gpg] https://download.opensuse.org/repositories/home:/1nfys/xUbuntu_26.04/ /' \
+  | sudo tee /etc/apt/sources.list.d/atlifm.list
 sudo apt update && sudo apt install atlifm
 ```
 
