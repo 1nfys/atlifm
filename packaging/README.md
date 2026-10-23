@@ -180,9 +180,9 @@ notes:
 * artifacts are attached to each workflow run (and to a GitHub Release on
   version tags); nothing pre-built is stored in the repository;
 * uploading to the user repositories is handled by
-  `.github/workflows/publish-packages.yml`, which runs on demand and reads
-  every credential from repository secrets (see “publishing from ci”
-  above).
+  `.github/workflows/publish-packages.yml`, which starts automatically
+  after the release and reads every credential from repository secrets
+  (see “publishing from ci” above).
 
 ## build requirements (all distributions)
 
