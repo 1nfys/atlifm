@@ -169,7 +169,7 @@ jobs:
       LAUNCHPAD_SSH_KEY: ${{ secrets.LAUNCHPAD_SSH_KEY }}
       LP_LOGIN: ${{ vars.LP_LOGIN || '1nfys' }}
       LP_PPA: ${{ vars.LP_PPA || 'atlifm' }}
-      PPA_SERIES: ${{ inputs.ppa_series }}
+      PPA_SERIES: ${{ inputs.ppa_series || vars.LP_SERIES || 'resolute' }}
     steps:
       - name: Check the credentials
         run: |
