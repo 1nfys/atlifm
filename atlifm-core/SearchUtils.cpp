@@ -97,6 +97,10 @@ MountTable readMountTable() {
         if (fsType == QLatin1String("squashfs") || fsType == QLatin1String("iso9660")) {
             continue;
         }
+        std::error_code ec;
+        if (!std::filesystem::is_directory(mountPoint, ec)) {
+            continue;
+        }
         if (roots.contains(normalized)) continue;
         roots.insert(normalized);
         out.roots.push_back(mountPoint);

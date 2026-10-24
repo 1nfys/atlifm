@@ -110,12 +110,50 @@ FileItem globalSearchItem(const std::filesystem::path& path) {
     return item;
 }
 
-std::vector<std::filesystem::path> globalSearchRoots() {
+std::vector<std::filesystem::path> globalSearchRoots(const std::filesystem::path& currentDir = {}) {
     auto roots = Core::Search::searchRoots();
     if (roots.empty()) roots.push_back(std::filesystem::path("/"));
     std::sort(roots.begin(), roots.end());
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
-    return roots;
+
+    const char* homeEnv = std::getenv("HOME");
+    const std::filesystem::path homePath = (homeEnv && *homeEnv) ? std::filesystem::path(homeEnv) : std::filesystem::path();
+
+    auto findMount = [&roots](const std::filesystem::path& target) -> std::filesystem::path {
+        if (target.empty()) return {};
+        std::filesystem::path best;
+        std::size_t bestLen = 0;
+        const std::string targetStr = target.lexically_normal().string();
+        for (const auto& r : roots) {
+            const std::string rStr = r.lexically_normal().string();
+            if (targetStr == rStr || (targetStr.rfind(rStr.back() == '/' ? rStr : rStr + "/", 0) == 0)) {
+                if (rStr.size() > bestLen) {
+                    bestLen = rStr.size();
+                    best = r;
+                }
+            }
+        }
+        return best;
+    };
+
+    const auto currentMount = findMount(currentDir);
+    const auto homeMount = findMount(homePath);
+
+    std::vector<std::filesystem::path> prioritized;
+    if (!currentMount.empty()) prioritized.push_back(currentMount);
+    if (!homeMount.empty() && homeMount != currentMount) prioritized.push_back(homeMount);
+    for (const auto& r : roots) {
+        if (r != currentMount && r != homeMount) prioritized.push_back(r);
+    }
+
+    std::vector<std::filesystem::path> validRoots;
+    for (const auto& r : prioritized) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(r, ec)) {
+            validRoots.push_back(r);
+        }
+    }
+    return validRoots;
 }
 
 std::vector<FileItem> scanNamesFallback(const QString& query,
@@ -1290,11 +1328,7 @@ void FileSystemModel::searchEverywhere(const QString& query) {
     if (m_searchCancel) m_searchCancel->store(true);
     m_searchCancel = std::make_shared<std::atomic_bool>(false);
     const uint64_t scanId = *m_scanCounter;
-    auto cancel = m_searchCancel;
-    auto scanCounter = m_scanCounter;
-    QPointer<FileSystemModel> self(this);
-    const bool showHidden = m_showHidden;
-    const auto roots = globalSearchRoots();
+
     beginResetModel();
     m_displayedItems.clear();
     endResetModel();
@@ -1302,56 +1336,123 @@ void FileSystemModel::searchEverywhere(const QString& query) {
     m_isLoading = true;
     emit loadingStarted();
 
-    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("search"))->start(
-        [self, scanId, scanCounter, cancel, needle, showHidden, roots]() {
-            std::vector<FileItem> items;
-            const QString fd = Core::Tools::findTool(QStringLiteral("fd"));
-            const QString fdfind = fd.isEmpty() ? Core::Tools::findTool(QStringLiteral("fdfind")) : QString();
-            const QString tool = fd.isEmpty() ? fdfind : fd;
-            if (!tool.isEmpty()) {
-                QStringList args{QStringLiteral("--color"), QStringLiteral("never"),
-                                 QStringLiteral("--absolute-path"),
-                                 QStringLiteral("--fixed-strings"),
-                                 QStringLiteral("--max-results"), QStringLiteral("1000"),
-                                 QStringLiteral("--max-depth"), QStringLiteral("24"),
-                                 QStringLiteral("--one-file-system")};
-                if (showHidden) args << QStringLiteral("--hidden");
-                args << QStringLiteral("--") << needle;
-                for (const auto& root : roots) args << QString::fromUtf8(root.c_str());
-                const auto res = Core::Tools::runSync(tool, args, 20000, 16 * 1024 * 1024, cancel);
-                if (res.cancelled || cancel->load() || scanCounter->load() != scanId) return;
-                if (res.started && !res.timedOut && res.exitCode >= 0 && res.exitCode <= 1) {
-                    QSet<QString> seen;
-                    const QList<QByteArray> lines = res.output.split('\n');
-                    items.reserve(lines.size());
-                    for (const QByteArray& raw : lines) {
-                        if (raw.isEmpty()) continue;
-                        const QString pathStr = QString::fromUtf8(raw);
-                        if (seen.contains(pathStr)) continue;
-                        seen.insert(pathStr);
-                        const std::filesystem::path path(pathStr.toUtf8().toStdString());
-                        std::error_code ec;
-                        if (!std::filesystem::exists(path, ec)) continue;
-                        FileItem item = globalSearchItem(path);
-                        item.fuzzyScore = Core::Search::fuzzyScore(needle, item.filename);
-                        items.push_back(std::move(item));
-                    }
-                }
+    const bool showHidden = m_showHidden;
+    const auto roots = globalSearchRoots(m_currentDir);
+
+    const QString fd = Core::Tools::findTool(QStringLiteral("fd"));
+    const QString fdfind = fd.isEmpty() ? Core::Tools::findTool(QStringLiteral("fdfind")) : QString();
+    const QString tool = fd.isEmpty() ? fdfind : fd;
+    QString program;
+    QStringList args;
+
+    if (!tool.isEmpty()) {
+        program = tool;
+        args = {QStringLiteral("--color"), QStringLiteral("never"),
+                QStringLiteral("--absolute-path"),
+                QStringLiteral("--fixed-strings"),
+                QStringLiteral("-i"),
+                QStringLiteral("-I"),
+                QStringLiteral("--max-results"), QStringLiteral("1000"),
+                QStringLiteral("--max-depth"), QStringLiteral("24"),
+                QStringLiteral("--one-file-system")};
+        if (showHidden) args << QStringLiteral("--hidden");
+        if (needle.contains(QLatin1Char('/')) || needle.contains(QLatin1Char('\\'))) {
+            args << QStringLiteral("--full-path");
+        }
+        args << QStringLiteral("--") << needle;
+        for (const auto& root : roots) args << QString::fromUtf8(root.c_str());
+    } else {
+        const QString findTool = Core::Tools::findTool(QStringLiteral("find"));
+        if (!findTool.isEmpty()) {
+            program = findTool;
+            for (const auto& root : roots) args << QString::fromUtf8(root.c_str());
+            args << QStringLiteral("-maxdepth") << QStringLiteral("24")
+                 << QStringLiteral("-xdev");
+            if (!showHidden) {
+                args << QStringLiteral("!") << QStringLiteral("-path") << QStringLiteral("*/.*");
             }
-            if (items.empty()) {
-                items = scanNamesFallback(needle, roots, showHidden, cancel, scanId, scanCounter);
+            if (needle.contains(QLatin1Char('/')) || needle.contains(QLatin1Char('\\'))) {
+                args << QStringLiteral("-ipath") << (QStringLiteral("*") + needle + QStringLiteral("*"));
+            } else {
+                args << QStringLiteral("-iname") << (QStringLiteral("*") + needle + QStringLiteral("*"));
             }
-            if (cancel->load() || scanCounter->load() != scanId) return;
-            std::sort(items.begin(), items.end(), [](const FileItem& a, const FileItem& b) {
+        }
+    }
+
+    if (program.isEmpty()) {
+        auto cancel = m_searchCancel;
+        auto scanCounter = m_scanCounter;
+        QPointer<FileSystemModel> self(this);
+        Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("search"))->start(
+            [self, scanId, scanCounter, cancel, needle, showHidden, roots]() {
+                auto items = scanNamesFallback(needle, roots, showHidden, cancel, scanId, scanCounter);
+                if (cancel->load() || scanCounter->load() != scanId) return;
+                std::sort(items.begin(), items.end(), [](const FileItem& a, const FileItem& b) {
+                    if (a.fuzzyScore != b.fuzzyScore) return a.fuzzyScore > b.fuzzyScore;
+                    if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
+                    return QString::compare(a.filename, b.filename, Qt::CaseInsensitive) < 0;
+                });
+                QMetaObject::invokeMethod(qApp, [self, scanCounter, scanId, items = std::move(items)]() mutable {
+                    if (!self || scanCounter->load() != scanId) return;
+                    self->applyGlobalResults(std::move(items));
+                }, Qt::QueuedConnection);
+            });
+        return;
+    }
+
+    auto* runner = new Core::Tools::ProcessRunner(this);
+    m_globalProcess = runner;
+    runner->setProgram(program);
+    runner->setArguments(args);
+    runner->setRecordSeparator('\n');
+    runner->setMaxOutputBytes(16 * 1024 * 1024);
+    runner->setTimeoutMs(30000);
+
+    connect(runner, &Core::Tools::ProcessRunner::recordReady, this,
+            [this, runner, scanId, needle](const QByteArray& record) {
+        if (m_globalProcess != runner || *m_scanCounter != scanId || record.isEmpty()) return;
+        QString cleanPath = QString::fromUtf8(record).trimmed();
+        while (cleanPath.size() > 1 && cleanPath.endsWith(QLatin1Char('/'))) {
+            cleanPath.chop(1);
+        }
+        if (cleanPath.isEmpty() || m_globalSeen.contains(cleanPath)) return;
+        if (m_displayedItems.size() >= 1000) {
+            runner->cancel();
+            return;
+        }
+        const std::filesystem::path path(cleanPath.toUtf8().toStdString());
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return;
+        m_globalSeen.insert(cleanPath);
+        FileItem item = globalSearchItem(path);
+        item.fuzzyScore = Core::Search::fuzzyScore(needle, item.filename);
+        const int row = static_cast<int>(m_displayedItems.size());
+        beginInsertRows(QModelIndex(), row, row);
+        m_displayedItems.push_back(std::move(item));
+        endInsertRows();
+    });
+
+    connect(runner, &Core::Tools::ProcessRunner::finished, this,
+            [this, runner, scanId](const Core::Tools::ProcessResult&) {
+        if (m_globalProcess != runner || *m_scanCounter != scanId) return;
+        m_globalProcess = nullptr;
+        m_isLoading = false;
+        if (m_displayedItems.size() > 1) {
+            std::sort(m_displayedItems.begin(), m_displayedItems.end(),
+                      [](const FileItem& a, const FileItem& b) {
                 if (a.fuzzyScore != b.fuzzyScore) return a.fuzzyScore > b.fuzzyScore;
                 if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
                 return QString::compare(a.filename, b.filename, Qt::CaseInsensitive) < 0;
             });
-            QMetaObject::invokeMethod(qApp, [self, scanCounter, scanId, items = std::move(items)]() mutable {
-                if (!self || scanCounter->load() != scanId) return;
-                self->applyGlobalResults(std::move(items));
-            }, Qt::QueuedConnection);
-        });
+            emit dataChanged(index(0, 0), index(static_cast<int>(m_displayedItems.size()) - 1, 0));
+        }
+        const int count = static_cast<int>(m_displayedItems.size());
+        emit loadingFinished(count);
+        emit globalSearchFinished(count);
+        runner->deleteLater();
+    });
+
+    runner->start();
 }
 
 void FileSystemModel::searchContents(const QString& query) {
@@ -1377,7 +1478,7 @@ void FileSystemModel::searchContents(const QString& query) {
     emit loadingStarted();
 
     const bool showHidden = m_showHidden;
-    const auto roots = globalSearchRoots();
+    const auto roots = globalSearchRoots(m_currentDir);
     const QString rg = Core::Tools::findTool(QStringLiteral("rg"));
     QString program;
     QStringList args;
