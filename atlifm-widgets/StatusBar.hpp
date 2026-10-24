@@ -11,6 +11,7 @@
 #include <QEventLoop>
 #include <QSet>
 #include <filesystem>
+#include <functional>
 
 class QHBoxLayout;
 
@@ -57,7 +58,8 @@ public:
     // режим одно окно: ввод, подтверждение и уведомление прямо в строке статусбара,
     // отдельных окон нет, вызов блокируется локальным QEventLoop (как модальный)
     QString askTextInline(const QString& label, const QString& initial,
-                          bool selectStemOnly, bool* ok, bool isPassword = false);
+                          bool selectStemOnly, bool* ok, bool isPassword = false,
+                          const std::function<void(const QString&)>& onTextChanged = {});
     bool askConfirmInline(const QString& title, const QString& message,
                           const QString& confirmText, const QString& cancelText,
                           bool isDanger);

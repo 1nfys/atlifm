@@ -160,14 +160,19 @@ void TuiInputPopup::keyPressEvent(QKeyEvent* event) {
 
 QString TuiInputPopup::getText(QWidget* parent, const QString& title, const QString& labelText,
                                const QString& initialText, bool* ok,
-                               const QPoint& targetPos, bool selectStemOnly, bool isPassword) {
+                               const QPoint& targetPos, bool selectStemOnly, bool isPassword,
+                               const std::function<void(const QString&)>& onTextChanged) {
     Q_UNUSED(title);
     // одно окно: инлайн в статусбаре главного окна
     if (TuiStatusBar* sb = locateStatusBar(parent)) {
-        return sb->askTextInline(labelText, initialText, selectStemOnly, ok, isPassword);
+        return sb->askTextInline(labelText, initialText, selectStemOnly, ok, isPassword, onTextChanged);
     }
     // фолбэк, если главного окна нет: отдельный попап
     TuiInputPopup dlg(title, labelText, initialText, parent, selectStemOnly, isPassword);
+    if (onTextChanged) {
+        QObject::connect(dlg.m_lineEdit, &QLineEdit::textChanged, &dlg,
+                         [onTextChanged](const QString& text) { onTextChanged(text); });
+    }
 
     dlg.adjustSize();
     QPoint pos = targetPos;

@@ -13,8 +13,14 @@ namespace Dnd {
 // только статические функции, класс не инстанцируется
 class DragDropHandler {
 public:
+    static constexpr const char* kMovePreferredMime = "application/x-atlifm-prefer-move";
+
     // создаёт исходящий объект QDrag с правильными MIME типами и собственным визуальным бейджем
     static QDrag* createDrag(const std::vector<std::filesystem::path>& paths, QWidget* dragSource);
+
+    static bool prefersMove(const QDropEvent* event);
+    static Qt::DropAction effectiveAction(const QDropEvent* event);
+    static void acceptDrag(QDropEvent* event);
 
     // создаёт pixmap превью перетаскивания: тёмный бейдж терминала "📄 [X items selected]"
     static QPixmap createDragPixmap(size_t itemCount, const QString& firstItemName);

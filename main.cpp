@@ -1,9 +1,11 @@
 #include "atlifm-core/XdgUtils.hpp"
 #include <QApplication>
+#include <QCoreApplication>
 #include <QFontDatabase>
 #include <QIcon>
 #include <QCommandLineParser>
 #include <QCommandLineOption>
+#include <QFile>
 #include <QPalette>
 #include <QStyleFactory>
 #include <QUrl>
@@ -11,12 +13,36 @@
 #include <cstdlib>
 #include "atlifm-theme/Theme.hpp"
 #include "atlifm-core/UserConfig.hpp"
+#include "atlifm-portal/FileManagerService.hpp"
 #include "atlifm-portal/PortalService.hpp"
+#include "atlifm-widgets/FirstRunDialog.hpp"
 #include "atlifm-widgets/MainWindow.hpp"
+#include <cstring>
+
+namespace {
+
+bool applyDefaultSetup() {
+    const bool portal = Portal::PortalService::setupPortalEnvironment();
+    const bool fileManager = Portal::FileManagerService::setup();
+    return portal && fileManager;
+}
+
+}
 
 int main(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--file-manager") == 0) {
+            QCoreApplication app(argc, argv);
+            QCoreApplication::setApplicationName("atlifm");
+            QCoreApplication::setApplicationVersion("1.0.2");
+            QCoreApplication::setOrganizationName("atlifm");
+            Portal::FileManagerService service;
+            return service.start() ? app.exec() : 1;
+        }
+    }
+
     QCoreApplication::setApplicationName("atlifm");
-    QCoreApplication::setApplicationVersion("1.0.1");
+    QCoreApplication::setApplicationVersion("1.0.2");
     QCoreApplication::setOrganizationName("atlifm");
 
     // омархи ставит gtk тему глобально а мы рисуем все через fusion и свою палитру
@@ -74,16 +100,41 @@ int main(int argc, char* argv[]) {
     parser.addOption(portalOption);
     QCommandLineOption setupPortalOption(
         QStringLiteral("setup-portal"),
-        QStringLiteral("Install and configure atlifm as the default XDG FileChooser portal backend"));
+        QStringLiteral("install and configure atlifm as the default filechooser portal backend"));
     parser.addOption(setupPortalOption);
-
+    QCommandLineOption fileManagerOption(
+        QStringLiteral("file-manager"),
+        QStringLiteral("run as the org.freedesktop.filemanager1 dbus service"));
+    parser.addOption(fileManagerOption);
+    QCommandLineOption setupFileManagerOption(
+        QStringLiteral("setup-file-manager"),
+        QStringLiteral("install atlifm as the default file manager for the current user"));
+    parser.addOption(setupFileManagerOption);
+    QCommandLineOption setDefaultOption(
+        QStringLiteral("setdefault"),
+        QStringLiteral("install atlifm as the default file manager and filechooser portal backend"));
+    parser.addOption(setDefaultOption);
+    QCommandLineOption propertiesOption(
+        QStringLiteral("properties"),
+        QStringLiteral("open the properties panel for the given path"),
+        QStringLiteral("path"));
+    parser.addOption(propertiesOption);
 
     parser.process(app);
 
+    if (parser.isSet(setDefaultOption)) {
+        if (applyDefaultSetup()) {
+            QTextStream(stdout) << QStringLiteral("atlifm is now the default file manager and file picker\n");
+            return 0;
+        }
+        QTextStream(stderr) << QStringLiteral("failed to configure atlifm\n");
+        return 1;
+    }
+
     // портал xdg и отдельное имя чтобы hyprland открывал окно во флоате
-        if (parser.isSet(setupPortalOption)) {
+    if (parser.isSet(setupPortalOption)) {
         if (Portal::PortalService::setupPortalEnvironment()) {
-            QTextStream(stdout) << QStringLiteral("atlifm portal configured as default file chooser successfully.\n");
+            QTextStream(stdout) << QStringLiteral("atlifm portal configured as default file chooser successfully\n");
             return 0;
         }
         return 1;
@@ -97,14 +148,25 @@ int main(int argc, char* argv[]) {
         return app.exec();
     }
 
+    if (parser.isSet(setupFileManagerOption)) {
+        if (Portal::FileManagerService::setup()) {
+            QTextStream(stdout) << QStringLiteral("atlifm configured as the default file manager successfully\n");
+            return 0;
+        }
+        return 1;
+    }
+
     const QStringList args = parser.positionalArguments();
+    const QString propertiesArg = parser.value(propertiesOption);
     std::filesystem::path initialPath;
+    std::filesystem::path propertiesPath;
 
     // имя окна для правил wm
     QGuiApplication::setDesktopFileName(QStringLiteral("atlifm"));
 
-    if (!args.isEmpty()) {
-        QString arg = args.first();
+    QString startArg = !args.isEmpty() ? args.first() : propertiesArg;
+    if (!startArg.isEmpty()) {
+        QString arg = startArg;
         if (arg.startsWith("file://")) {
             arg = QUrl(arg).toLocalFile();
         }
@@ -115,9 +177,28 @@ int main(int argc, char* argv[]) {
             initialPath = std::filesystem::canonical(p, ec);
         }
     }
+    if (!propertiesArg.isEmpty()) {
+        QString arg = propertiesArg;
+        if (arg.startsWith("file://")) arg = QUrl(arg).toLocalFile();
+        propertiesPath = std::filesystem::path(arg.toUtf8().toStdString());
+    }
+
+    bool firstRun = Theme::uiConfig().firstRun;
+    const QString legacyMarker = Theme::configDir() + QStringLiteral("/first-run.done");
+    if (QFile::exists(legacyMarker)) {
+        Theme::setConfigValue(QStringLiteral("first_run"), QStringLiteral("false"));
+        QFile::remove(legacyMarker);
+        firstRun = false;
+    }
+    if (firstRun) {
+        Widgets::FirstRunDialog dialog;
+        if (dialog.exec() == QDialog::Accepted) applyDefaultSetup();
+        Theme::setConfigValue(QStringLiteral("first_run"), QStringLiteral("false"));
+    }
 
     Widgets::MainWindow window(initialPath);
     window.show();
+    if (!propertiesPath.empty()) window.showPropertiesOverlay(propertiesPath);
 
     return app.exec();
 }

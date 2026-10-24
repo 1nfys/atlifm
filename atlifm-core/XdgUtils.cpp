@@ -1584,6 +1584,65 @@ bool isSingleStreamName(const QString& lower) {
     return hasSuffix(lower, {".gz", ".xz", ".bz2", ".zst", ".zstd", ".lz4", ".lzma"});
 }
 
+QString archiveDummyPassword() {
+    return QStringLiteral("atlifm-no-password");
+}
+
+bool looksLikePasswordError(const QString& text) {
+    const QString lower = text.toLower();
+    return lower.contains(QStringLiteral("password")) ||
+           lower.contains(QStringLiteral("passphrase")) ||
+           lower.contains(QStringLiteral("encrypted"));
+}
+
+QString archivePasswordError() {
+    return QStringLiteral("Archive password is required.");
+}
+
+QMutex& archivePasswordMutex() {
+    static QMutex mutex;
+    return mutex;
+}
+
+QHash<QString, QString>& archivePasswordCache() {
+    static QHash<QString, QString> cache;
+    return cache;
+}
+
+QString cachedArchivePassword(const QString& archivePath) {
+    QMutexLocker lock(&archivePasswordMutex());
+    return archivePasswordCache().value(archivePath);
+}
+
+void rememberArchivePassword(const QString& archivePath, const QString& password) {
+    QMutexLocker lock(&archivePasswordMutex());
+    archivePasswordCache().insert(archivePath, password);
+}
+
+QString archivePasswordArg(const QString& password) {
+    return password.isEmpty() ? archiveDummyPassword() : password;
+}
+
+QString askArchivePassword(const QString& archivePath, bool wrongPassword) {
+    const QString name = QFileInfo(archivePath).fileName();
+    const QString label = wrongPassword
+        ? QStringLiteral("Wrong password. Enter password for %1 again:").arg(name)
+        : QStringLiteral("Enter password for %1:").arg(name);
+    bool ok = false;
+    QString password;
+    auto ask = [&]() {
+        password = Widgets::TuiInputPopup::getText(
+            nullptr, QStringLiteral("Archive Password"), label, QString(), &ok,
+            QPoint(), false, true);
+    };
+    QCoreApplication* app = QCoreApplication::instance();
+    if (!app || QThread::currentThread() == app->thread())
+        ask();
+    else
+        QMetaObject::invokeMethod(app, ask, Qt::BlockingQueuedConnection);
+    return ok ? password : QString();
+}
+
 // общий запуск внешней операции с опросом процесса
 // чтобы можно было отменить долгий архив из тасков
 bool runAndWait(QProcess& proc, QString& errorMsg,
@@ -1625,6 +1684,7 @@ bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg,
         }
         QProcess proc;
         proc.setProcessChannelMode(QProcess::SeparateChannels);
+        proc.setStandardInputFile(QProcess::nullDevice());
         if (!cmd.cwd.isEmpty()) proc.setWorkingDirectory(cmd.cwd);
         proc.start(cmd.program, cmd.args);
         if (!proc.waitForStarted(5000)) {
@@ -1646,6 +1706,31 @@ bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg,
             errors << cmd.program + ": " + detail;
     }
     errorMsg = errors.isEmpty() ? QStringLiteral("no suitable tool found") : errors.last();
+    if (looksLikePasswordError(errors.join('\n'))) errorMsg = archivePasswordError();
+    return false;
+}
+
+using ArchiveCmdBuilder = std::function<std::vector<ArchiveCmd>(const QString&)>;
+
+bool runArchiveCommand(const QString& archivePath, const ArchiveCmdBuilder& buildCmds,
+                       QString& errorMsg,
+                       const std::shared_ptr<std::atomic_bool>& cancelToken) {
+    QString password = cachedArchivePassword(archivePath);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (runFirstSuccessful(buildCmds(password), errorMsg, cancelToken)) {
+            errorMsg.clear();
+            if (!password.isEmpty()) rememberArchivePassword(archivePath, password);
+            return true;
+        }
+        if (cancelToken && cancelToken->load()) return false;
+        if (!looksLikePasswordError(errorMsg)) return false;
+        password = askArchivePassword(archivePath, attempt > 0);
+        if (password.isEmpty()) {
+            errorMsg = archivePasswordError();
+            return false;
+        }
+    }
+    errorMsg = QStringLiteral("Wrong archive password.");
     return false;
 }
 
@@ -1657,6 +1742,7 @@ bool compressStreamToFile(const QString& prog, const QStringList& args,
     QProcess proc;
     proc.setWorkingDirectory(cwd);
     proc.setProcessChannelMode(QProcess::SeparateChannels);
+    proc.setStandardInputFile(QProcess::nullDevice());
     proc.start(prog, args);
     if (!proc.waitForStarted(5000)) {
         errorMsg = proc.errorString();
@@ -1949,28 +2035,35 @@ bool XdgUtils::extractArchive(const std::filesystem::path& archivePath,
     const QString destStr = QString::fromUtf8(dest.c_str());
 
     const QString sevenZip = findSevenZip();
-    std::vector<ArchiveCmd> cmds;
-    if (isTarArchiveName(lower)) {
-        if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty())
-            cmds.push_back({bsdtar, {"-xf", arcStr, "-C", destStr}, {}});
-        if (const QString tar = findTool({"tar"}); !tar.isEmpty())
-            cmds.push_back({tar, {"-xf", arcStr, "-C", destStr}, {}});
-    } else {
-        if (!sevenZip.isEmpty())
-            cmds.push_back({sevenZip, {"x", "-y", "-bso0", "-bsp0", "-o" + destStr, "--", arcStr}, {}});
-        if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty())
-            cmds.push_back({bsdtar, {"-xf", arcStr, "-C", destStr}, {}});
-        if (lower.endsWith(".zip")) {
-            if (const QString unzip = findTool({"unzip"}); !unzip.isEmpty())
-                cmds.push_back({unzip, {"-q", "-o", arcStr, "-d", destStr}, {}});
+    const auto buildCmds = [&](const QString& password) {
+        std::vector<ArchiveCmd> cmds;
+        const QString pw = archivePasswordArg(password);
+        if (isTarArchiveName(lower)) {
+            if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty())
+                cmds.push_back({bsdtar, {"-xf", arcStr, "-C", destStr}, {}});
+            if (const QString tar = findTool({"tar"}); !tar.isEmpty())
+                cmds.push_back({tar, {"-xf", arcStr, "-C", destStr}, {}});
+        } else {
+            if (!sevenZip.isEmpty())
+                cmds.push_back({sevenZip, {"x", "-y", "-bso0", "-bsp0", "-p" + pw,
+                                           "-o" + destStr, "--", arcStr}, {}});
+            if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty())
+                cmds.push_back({bsdtar, {"--passphrase", pw,
+                                         "-xf", arcStr, "-C", destStr}, {}});
+            if (lower.endsWith(".zip")) {
+                if (const QString unzip = findTool({"unzip"}); !unzip.isEmpty())
+                    cmds.push_back({unzip, {"-q", "-o", "-P", pw,
+                                            arcStr, "-d", destStr}, {}});
+            }
         }
-    }
+        return cmds;
+    };
 
-    if (cmds.empty()) {
+    if (buildCmds(QString()).empty()) {
         errorMsg = "No extractor available (install 7z or tar).";
         return false;
     }
-    if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+    if (runArchiveCommand(arcStr, buildCmds, errorMsg, cancelToken)) return true;
     if (cancelToken && cancelToken->load()) {
         cleanupPartial();
         errorMsg = QStringLiteral("Cancelled");
@@ -2036,38 +2129,44 @@ bool XdgUtils::extractArchiveEntries(const std::filesystem::path& archivePath,
 
     const QString destStr = QString::fromUtf8(destinationFolder.c_str());
     const QString sevenZip = findSevenZip();
-    std::vector<ArchiveCmd> cmds;
-    if (isTarArchiveName(lower)) {
-        // 7z непригоден для tar.*: разворачивает только внутренний .tar
-        if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty()) {
-            QStringList args{"-xf", arcStr, "-C", destStr, "--"};
-            args += names;
-            cmds.push_back({bsdtar, args, {}});
+    const auto buildCmds = [&](const QString& password) {
+        std::vector<ArchiveCmd> cmds;
+        const QString pw = archivePasswordArg(password);
+        if (isTarArchiveName(lower)) {
+            // 7z не подходит для tar архивов так как распакует только внутренний тарбол
+            if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty()) {
+                QStringList args{"-xf", arcStr, "-C", destStr, "--"};
+                args += names;
+                cmds.push_back({bsdtar, args, {}});
+            }
+            if (const QString tar = findTool({"tar"}); !tar.isEmpty()) {
+                QStringList args{"-xf", arcStr, "-C", destStr, "--"};
+                args += names;
+                cmds.push_back({tar, args, {}});
+            }
+        } else {
+            if (!sevenZip.isEmpty()) {
+                QStringList args{"x", "-y", "-bso0", "-bsp0", "-p" + pw,
+                                 "-o" + destStr, "--", arcStr};
+                args += names;
+                cmds.push_back({sevenZip, args, {}});
+            }
+            // bsdtar умеет работать с зип и 7z и находит пути со слешем и без него
+            if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty()) {
+                QStringList args{"--passphrase", pw,
+                                 "-xf", arcStr, "-C", destStr, "--"};
+                args += names;
+                cmds.push_back({bsdtar, args, {}});
+            }
         }
-        if (const QString tar = findTool({"tar"}); !tar.isEmpty()) {
-            QStringList args{"-xf", arcStr, "-C", destStr, "--"};
-            args += names;
-            cmds.push_back({tar, args, {}});
-        }
-    } else {
-        if (!sevenZip.isEmpty()) {
-            QStringList args{"x", "-y", "-bso0", "-bsp0", "-o" + destStr, "--", arcStr};
-            args += names;
-            cmds.push_back({sevenZip, args, {}});
-        }
-        // bsdtar умеет zip/7z и матчит имена с «./» и без
-        if (const QString bsdtar = findTool({"bsdtar"}); !bsdtar.isEmpty()) {
-            QStringList args{"-xf", arcStr, "-C", destStr, "--"};
-            args += names;
-            cmds.push_back({bsdtar, args, {}});
-        }
-    }
+        return cmds;
+    };
 
-    if (cmds.empty()) {
+    if (buildCmds(QString()).empty()) {
         errorMsg = "No extractor available (install 7z or tar).";
         return false;
     }
-    if (runFirstSuccessful(cmds, errorMsg, cancelToken)) return true;
+    if (runArchiveCommand(arcStr, buildCmds, errorMsg, cancelToken)) return true;
     if (cancelToken && cancelToken->load()) {
         cleanupPartial();
         errorMsg = QStringLiteral("Cancelled");
@@ -2087,66 +2186,95 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
     constexpr int kMaxEntries = 2000;
     constexpr qint64 kMaxOutput = 8 * 1024 * 1024;
 
-    QProcess proc;
-    proc.setProcessChannelMode(QProcess::SeparateChannels);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("LC_ALL", "C.UTF-8");
-    proc.setProcessEnvironment(env);
-
     const bool tarFamily = isTarArchiveName(lower);
     const QString bsdtar = findTool({"bsdtar"});
     QString prog;
-    QStringList args;
     if (tarFamily) {
         if (bsdtar.isEmpty()) {
             outError = "bsdtar not found";
             return false;
         }
         prog = bsdtar;
-        args = {"-tvf", arcStr};
     } else {
         const QString sevenZip = findSevenZip();
         if (!sevenZip.isEmpty()) {
             prog = sevenZip;
-            args = {"l", "-slt", "-ba", "--", arcStr};
         } else if (!bsdtar.isEmpty()) {
             prog = bsdtar;
-            args = {"-tvf", arcStr};
         } else {
             outError = "No archive lister available (install 7z).";
             return false;
         }
     }
 
-    proc.start(prog, args);
-    if (!proc.waitForStarted(5000)) {
-        outError = proc.errorString();
-        return false;
-    }
-    // stdout читаем порциями с жестким лимитом
-    // иначе весь листинг в памяти съедал бы всю оперативку
+    auto buildArgs = [&](const QString& password) {
+        const QString pw = archivePasswordArg(password);
+        if (prog == bsdtar) return QStringList{"--passphrase", pw, "-tvf", arcStr};
+        return QStringList{"l", "-slt", "-ba", "-p" + pw, "--", arcStr};
+    };
+
+    QString password = cachedArchivePassword(arcStr);
     QByteArray raw;
     bool outputOverflow = false;
-    while (true) {
-        const QByteArray chunk = proc.readAllStandardOutput();
-        if (!chunk.isEmpty()) {
-            if (raw.size() + chunk.size() > kMaxOutput) {
-                raw.append(chunk.left(kMaxOutput - raw.size()));
-                outputOverflow = true;
-                outTruncated = true;
+    for (int attempt = 0; ; ++attempt) {
+        QProcess proc;
+        proc.setProcessChannelMode(QProcess::SeparateChannels);
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("LC_ALL", "C.UTF-8");
+        proc.setProcessEnvironment(env);
+        proc.setStandardInputFile(QProcess::nullDevice());
+        proc.start(prog, buildArgs(password));
+        if (!proc.waitForStarted(5000)) {
+            outError = proc.errorString();
+            return false;
+        }
+        // stdout читаем порциями с жестким лимитом
+        // иначе весь листинг в памяти съедал бы всю оперативку
+        raw.clear();
+        outputOverflow = false;
+        QElapsedTimer listingTimer;
+        listingTimer.start();
+        while (true) {
+            const QByteArray chunk = proc.readAllStandardOutput();
+            if (!chunk.isEmpty()) {
+                if (raw.size() + chunk.size() > kMaxOutput) {
+                    raw.append(chunk.left(kMaxOutput - raw.size()));
+                    outputOverflow = true;
+                    outTruncated = true;
+                    proc.kill();
+                    proc.waitForFinished(1000);
+                    break;
+                }
+                raw.append(chunk);
+            }
+            if (proc.state() == QProcess::NotRunning) break;
+            if (listingTimer.elapsed() > 30000) {
                 proc.kill();
                 proc.waitForFinished(1000);
-                break;
+                outError = QStringLiteral("listing timed out");
+                return false;
             }
-            raw.append(chunk);
+            proc.waitForReadyRead(1000);
         }
-        if (proc.state() == QProcess::NotRunning) break;
-        proc.waitForReadyRead(1000);
-    }
-    if (!outputOverflow && (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)) {
-        outError = QString::fromUtf8(proc.readAllStandardError()).trimmed();
-        if (outError.isEmpty()) outError = "listing failed";
-        return false;
+        if (!outputOverflow &&
+            (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)) {
+            outError = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+            if (outError.isEmpty()) outError = "listing failed";
+            if (!looksLikePasswordError(outError)) return false;
+            if (attempt >= 2) {
+                outError = QStringLiteral("Wrong archive password.");
+                return false;
+            }
+            password = askArchivePassword(arcStr, attempt > 0);
+            if (password.isEmpty()) {
+                outError = archivePasswordError();
+                return false;
+            }
+            continue;
+        }
+        if (!password.isEmpty()) rememberArchivePassword(arcStr, password);
+        outError.clear();
+        break;
     }
     if (raw.size() > kMaxOutput) {
         raw.truncate(kMaxOutput);

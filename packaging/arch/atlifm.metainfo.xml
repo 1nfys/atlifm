@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.2" date="2026-10-24">
+      <description>
+        <p>default file manager integration, filemanager1 dbus service, live plugin previews and archive password support.</p>
+      </description>
+    </release>
     <release version="1.0.1" date="2026-10-21">
       <description>
         <p>Multiple windows, layout restore, search scope and memory fixes.</p>

@@ -17,7 +17,6 @@ class QLibrary;
 namespace Widgets {
 
 class MainWindow;
-class TuiOutputOverlay;
 
 // хост нативных плагинов dlopen plugins so
 // сбор регистраций и диспетчеризация все колбеки кроме render превью в gui потоке
@@ -53,7 +52,7 @@ public:
                       const std::vector<std::filesystem::path>& selection,
                       const std::filesystem::path& cwd,
                       const QString& query = QString(),
-                      bool commandOutput = false);
+                      bool allowQueryPrompt = false);
 
     bool hasPreview(const std::filesystem::path& path) const;
     // вызывается из рабочего потока: доступен только write
@@ -132,20 +131,17 @@ private:
                           const std::vector<std::filesystem::path>& selection,
                           const std::filesystem::path& cwd,
                           const QString& skipPluginId,
-                          const QString& query = QString(),
-                          bool commandOutput = false);
+                          const QString& query = QString());
     void beginSession(const QString& title, const QString& actionId,
                       const std::vector<std::filesystem::path>& selection,
                       const std::filesystem::path& cwd,
-                      const QString& query = QString(),
-                      bool commandOutput = false);
+                      const QString& query = QString());
     void endSession(int result);
     void tryFinishSession();
     void ensurePanesBegun();
     void sessionAppend(const QByteArray& data);
     void sessionAppendPane(int pane, const QByteArray& data);
     void onSessionProcessFinished(quint64 generation);
-    TuiOutputOverlay* ensureOverlay();
 
     MainWindow* m_window{nullptr};
     bool m_initialized{false};
@@ -163,15 +159,13 @@ private:
 
     struct Session {
         bool context{false};
-        bool begun{false};
-        bool commandOutput{false};
         bool panesBegun{false};
+        bool viaOverride{false};
         QString title;
         QString actionId;
         QString cwd;
         QString query;
         QStringList selection;
-        QPointer<TuiOutputOverlay> overlay;
         quint64 generation{0};
         int pending{0};
         bool runReturned{false};

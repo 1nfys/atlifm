@@ -451,7 +451,7 @@ void BookmarksBar::addBookmark(const std::filesystem::path& path, const QString&
 
 void BookmarksBar::dragEnterEvent(QDragEnterEvent* event) {
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -459,7 +459,7 @@ void BookmarksBar::dragEnterEvent(QDragEnterEvent* event) {
 
 void BookmarksBar::dragMoveEvent(QDragMoveEvent* event) {
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -486,8 +486,10 @@ void BookmarksBar::dropEvent(QDropEvent* event) {
             if (std::filesystem::is_directory(dest, ec)) {
                 auto paths = Dnd::DragDropHandler::extractPaths(event->mimeData());
                 if (!paths.empty()) {
-                    event->acceptProposedAction();
-                    emit filesDropped(paths, dest, event->proposedAction(), event->modifiers());
+                    const Qt::DropAction action = Dnd::DragDropHandler::effectiveAction(event);
+                    event->setDropAction(action);
+                    emit filesDropped(paths, dest, action, event->modifiers());
+                    event->accept();
                     return;
                 }
                 QPointer<BookmarksBar> guard(this);

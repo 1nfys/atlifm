@@ -1,6 +1,6 @@
 pkgbase = atlifm
 	pkgdesc = Terminal-style file manager with a GUI mouse-first workflow
-	pkgver = 1.0.1
+	pkgver = 1.0.2
 	pkgrel = 1
 	url = https://github.com/1nfys/atlifm
 	arch = x86_64
@@ -14,11 +14,11 @@ pkgbase = atlifm
 	depends = glib2
 	depends = hicolor-icon-theme
 	optdepends = libsecret: password management for network places
-	source = atlifm-1.0.1-fixed.tar.gz
+	source = atlifm-1.0.2-fixed.tar.gz
 	source = atlifm.metainfo.xml
 	source = atlifm.1
 	sha256sums = SKIP
-	sha256sums = cf86a66fa4ab47048545e64e5d472499cd688a8b0390bb0c2e9e3bc189ae6fca
-	sha256sums = b102975be0e05c391efb4bba4ef2eb9acd660e83373b1cbd861245222d8aaa43
+	sha256sums = 0ae63ccd764003613100ea45679689bf1d039ccd59e1342b93a5aac04e994060
+	sha256sums = b19341b8f5d2f0e297016667ed9b416f32ea6ac4f6e2972e56d830767112c1ac
 
 pkgname = atlifm

@@ -390,6 +390,7 @@ void MainWindow::setupUi() {
             &MainWindow::onFilterCommandChanged);
     connect(m_statusBar, &TuiStatusBar::filterSubmitted, this, &MainWindow::onFilterSubmitted);
     connect(m_statusBar, &TuiStatusBar::filterDismissed, this, [this]() {
+        if (m_millerView) m_millerView->cancelPluginPreview(true);
         if (m_filterSearchTimer) m_filterSearchTimer->stop();
         if (m_keepGlobalResultsOnDismiss) {
             m_keepGlobalResultsOnDismiss = false;
@@ -1403,6 +1404,18 @@ void MainWindow::createKeybindShortcuts() {
             return;
         }
 
+        if (m_statusBar && m_statusBar->isPromptActive()) {
+            m_statusBar->cancelInlinePrompt();
+            return;
+        }
+
+        if (m_statusBar && m_statusBar->isFilterActive() &&
+            m_millerView && m_millerView->isPluginPreviewActive()) {
+            if (m_statusBar->cancelFilterCommand()) return;
+            m_statusBar->clearFilter();
+            return;
+        }
+
         // вывод команды плагина в три панели и esc возвращает к колонкам
         if (m_millerView && m_millerView->isPluginPanesVisible()) {
             m_millerView->closePluginPanes();
@@ -1427,10 +1440,6 @@ void MainWindow::createKeybindShortcuts() {
         if (m_propsOverlay && m_propsOverlay->isVisible()) {
             m_propsOverlay->hide();
             if (m_millerView) m_millerView->setFocus();
-            return;
-        }
-        if (m_statusBar && m_statusBar->isPromptActive()) {
-            m_statusBar->cancelInlinePrompt();
             return;
         }
         if (Dnd::DragDropHandler::hasActiveOperation()) {
@@ -1996,7 +2005,15 @@ void MainWindow::finishPluginPanes(int exitCode) {
     if (m_millerView) m_millerView->finishPluginPanes(exitCode);
 }
 
+void MainWindow::closePluginPanes() {
+    if (m_millerView) m_millerView->closePluginPanes();
+}
+
 void MainWindow::onFilterChanged(const QString& filter) {
+    if (m_millerView) {
+        m_millerView->cancelPluginPreview(
+            true, !(m_statusBar && m_statusBar->isFilterActive()));
+    }
     if (m_filterSearchTimer) m_filterSearchTimer->stop();
     m_keepGlobalResultsOnDismiss = false;
     m_millerView->clearGlobalSearch();
@@ -2005,6 +2022,7 @@ void MainWindow::onFilterChanged(const QString& filter) {
 
 void MainWindow::onFilterCommandChanged(const QString& token, const QString& query) {
     if (token == QLatin1String("fd") || token == QLatin1String("rg")) {
+        if (m_millerView) m_millerView->cancelPluginPreview(true, false);
         m_pendingSearchToken = token;
         m_pendingSearchQuery = query;
         if (m_filterSearchTimer) m_filterSearchTimer->stop();
@@ -2013,6 +2031,15 @@ void MainWindow::onFilterCommandChanged(const QString& token, const QString& que
             return;
         }
         if (m_filterSearchTimer) m_filterSearchTimer->start();
+        return;
+    }
+
+    const auto it = m_filterPluginCommands.constFind(token);
+    if (it != m_filterPluginCommands.constEnd() &&
+        it->mode == QLatin1String("query") && !it->native) {
+        m_millerView->schedulePluginPreview(it->pluginId, query);
+    } else if (m_millerView) {
+        m_millerView->cancelPluginPreview(true, false);
     }
 }
 
@@ -2020,6 +2047,7 @@ void MainWindow::onFilterSubmitted() {
     if (!m_statusBar) return;
     const QString token = m_statusBar->filterCommand();
     const QString query = m_statusBar->filterQuery();
+    if (m_millerView) m_millerView->cancelPluginPreview(true);
     if (token.isEmpty()) {
         m_statusBar->deactivateFilter();
         return;

@@ -36,10 +36,14 @@ public:
     void clearEntrySelection();
     bool hasSelectedEntries() const;
     void copySelectedEntries();
+    bool extractEntryForPreview(const QString& normalizedPath, const QString& memberPath,
+                                std::filesystem::path& outPath, QString& error);
+    bool isExtracting() const { return m_extracting; }
 
 signals:
     void selectionInteractionStarted();
     void messageRequested(const QString& message);
+    void entrySelected(const QString& normalizedPath, const QString& memberPath, bool isDir);
 
 protected:
     void startDrag(Qt::DropActions supportedActions) override;
@@ -70,6 +74,7 @@ private:
 
     // пока кнопка зажата ждем распаковку а отпускание отменяет старт drag но кэш догревается
     bool m_gestureButtonDown{false};
+    bool m_extracting{false};
     QHash<QString, Core::Tasks::TaskId> m_pendingExtractions;
 
     QRubberBand* m_rubberBand{nullptr};

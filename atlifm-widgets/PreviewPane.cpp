@@ -574,6 +574,7 @@ protected:
                     setCursor(Qt::ArrowCursor);
                     QDrag* drag = Dnd::DragDropHandler::createDrag({m_filePath}, this);
                     if (drag) {
+                        drag->mimeData()->setData(Dnd::DragDropHandler::kMovePreferredMime, "1");
                         drag->exec(Qt::CopyAction | Qt::MoveAction | Qt::LinkAction, Qt::CopyAction);
                     }
                     event->accept();
@@ -1400,7 +1401,7 @@ void PreviewPane::dragEnterEvent(QDragEnterEvent* event) {
         return;
     }
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -1412,7 +1413,7 @@ void PreviewPane::dragMoveEvent(QDragMoveEvent* event) {
         return;
     }
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -1439,16 +1440,18 @@ void PreviewPane::dropEvent(QDropEvent* event) {
     }
 
     if (!targetDir.empty()) {
+        const Qt::DropAction action = Dnd::DragDropHandler::effectiveAction(event);
+        event->setDropAction(action);
         QPointer<PreviewPane> guard(this);
         if (Dnd::DragDropHandler::handleMimeDrop(event->mimeData(), targetDir,
-                                                     event->proposedAction(), event->modifiers(),
+                                                     action, event->modifiers(),
                                                      parentWidget(), [guard]() {
                                                          if (guard && guard->m_dirModel
                                                              && guard->m_stackedWidget->currentIndex() == PageDir) {
                                                              guard->m_dirModel->refresh();
                                                          }
                                                      })) {
-            event->acceptProposedAction();
+            event->accept();
             return;
         }
     }

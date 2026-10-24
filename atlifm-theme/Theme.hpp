@@ -8,6 +8,7 @@
 #include <QPalette>
 #include <QSettings>
 #include <QFile>
+#include <QStringList>
 #include <QTextStream>
 #include <shared_mutex>
 #include <mutex>
@@ -346,6 +347,40 @@ inline QString configDir() {
     return QString::fromUtf8(home) + "/.config/atlifm";
 }
 
+inline bool setConfigValue(const QString& key, const QString& value) {
+    const QString dir = configDir();
+    if (dir.isEmpty() || key.isEmpty()) return false;
+    const QString path = dir + QStringLiteral("/theme.conf");
+
+    QStringList lines;
+    {
+        QFile in(path);
+        if (in.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream ts(&in);
+            while (!ts.atEnd()) lines.append(ts.readLine());
+        }
+    }
+
+    bool replaced = false;
+    for (QString& line : lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.isEmpty() || trimmed.startsWith('#')) continue;
+        const int eq = trimmed.indexOf('=');
+        if (eq <= 0) continue;
+        if (trimmed.left(eq).trimmed().compare(key, Qt::CaseInsensitive) != 0) continue;
+        line = key + QStringLiteral(" = ") + value;
+        replaced = true;
+        break;
+    }
+    if (!replaced) lines.append(key + QStringLiteral(" = ") + value);
+
+    QFile out(path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return false;
+    QTextStream os(&out);
+    for (const QString& line : lines) os << line << '\n';
+    return true;
+}
+
 // конфиг темы: ~/.config/atlifm/theme.conf (каталог переопределяется ATLIFM_CONFIG_DIR)
 // формат плоский `key = #rrggbb` (или `#aarrggbb` с альфой), `#` в начале строки это комментарий
 // два слоя: 1) атомы палитры (base, mantle, ... accent, teal, dark)
@@ -372,6 +407,7 @@ struct UiConfig {
     QString fontFamily;
     int fontSize{13};
     int fontPointSize{10};
+    bool firstRun{true};
 };
 
 inline UiConfig& uiConfig() {
@@ -405,6 +441,12 @@ inline void applyAppThemeConf(PaletteDefinition& p) {
         if (key == "dark" || key == "is_dark") {
             QString v = val.toLower();
             p.isDark = (v != "false" && v != "0" && v != "light");
+            continue;
+        }
+
+        if (key == "first_run") {
+            const QString v = val.toLower();
+            uiConfig().firstRun = (v != "false" && v != "0" && v != "off" && v != "no");
             continue;
         }
 

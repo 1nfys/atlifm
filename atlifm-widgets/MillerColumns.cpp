@@ -1,7 +1,6 @@
 #include "MillerColumns.hpp"
 #include "ContextMenu.hpp"
 #include "NativePlugins.hpp"
-#include "TuiOutputOverlay.hpp"
 #include "TuiPanesOverlay.hpp"
 #include "ArchiveTreeWidget.hpp"
 #include "../atlifm-models/ArchiveModel.hpp"
@@ -530,13 +529,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
             m_clearOthersOnRelease = false;
 
             if (!paths.empty()) {
-                // Proposed action по умолчанию MOVE как в Nautilus/Thunar/Dolphin;
-                // приёмники сами отвечают Copy, если не умеют Move, а Ctrl на старте
-                // драга заранее задаёт Copy для внешних приложений
-                Qt::DropAction defaultAction =
-                    (event->modifiers() & Qt::ControlModifier) ? Qt::CopyAction
-                                                              : Qt::MoveAction;
-                startDragOut(paths, event->modifiers(), defaultAction);
+                startDragOut(paths);
                 return;
             }
         }
@@ -578,13 +571,12 @@ std::vector<std::filesystem::path> MillerListView::dragOutPaths(const QModelInde
     return paths;
 }
 
-void MillerListView::startDragOut(const std::vector<std::filesystem::path>& paths,
-                                  Qt::KeyboardModifiers /*modifiers*/,
-                                  Qt::DropAction defaultAction) {
+void MillerListView::startDragOut(const std::vector<std::filesystem::path>& paths) {
     if (paths.empty()) return;
     QDrag* drag = Dnd::DragDropHandler::createDrag(paths, this);
     if (drag) {
-        drag->exec(Qt::CopyAction | Qt::MoveAction | Qt::LinkAction, defaultAction);
+        drag->mimeData()->setData(Dnd::DragDropHandler::kMovePreferredMime, "1");
+        drag->exec(Qt::CopyAction | Qt::MoveAction | Qt::LinkAction, Qt::CopyAction);
     }
 }
 
@@ -643,7 +635,7 @@ void MillerListView::mouseReleaseEvent(QMouseEvent* event) {
 
 void MillerListView::dragEnterEvent(QDragEnterEvent* event) {
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -657,7 +649,7 @@ void MillerListView::dragMoveEvent(QDragMoveEvent* event) {
         } else {
             setDropTargetRow(-1);
         }
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -693,8 +685,10 @@ void MillerListView::dropEvent(QDropEvent* event) {
 
     auto paths = Dnd::DragDropHandler::extractPaths(event->mimeData());
     if (!paths.empty()) {
-        emit filesDropped(paths, targetDir, event->proposedAction(), event->modifiers());
-        event->acceptProposedAction();
+        const Qt::DropAction action = Dnd::DragDropHandler::effectiveAction(event);
+        event->setDropAction(action);
+        emit filesDropped(paths, targetDir, action, event->modifiers());
+        event->accept();
         return;
     }
 
@@ -761,6 +755,13 @@ void MillerViewContainer::setupUi() {
     auto mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
+
+    m_viewStack = new QStackedWidget(this);
+    m_viewStack->setObjectName(QStringLiteral("millerViewStack"));
+    if (auto* stackLayout = m_viewStack->layout()) {
+        stackLayout->setContentsMargins(0, 0, 0, 0);
+        stackLayout->setSpacing(0);
+    }
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->setObjectName(QStringLiteral("millerSplitter"));
@@ -857,7 +858,14 @@ void MillerViewContainer::setupUi() {
     m_sortButton->show();
     m_sortButton->raise();
 
-    mainLayout->addWidget(m_splitter, 1);
+    mainLayout->addWidget(m_viewStack, 1);
+
+    m_viewStack->addWidget(m_splitter);
+    m_pluginPanes = new TuiPanesOverlay(m_viewStack);
+    connect(m_pluginPanes, &TuiPanesOverlay::closeRequested,
+            this, [this]() { closePluginPanes(); });
+    m_viewStack->addWidget(m_pluginPanes);
+    m_viewStack->setCurrentWidget(m_splitter);
 
     // Страница архива живёт только в центральной колонке: левая и правая
     // колонки остаются на месте, путь вкладки при этом не меняется.
@@ -878,9 +886,6 @@ void MillerViewContainer::setupUi() {
     connect(m_archiveBackBtn, &QPushButton::clicked, this, &MillerViewContainer::leaveArchive);
     archiveHeaderLayout->addWidget(m_archiveBackBtn, 0, Qt::AlignVCenter);
 
-    m_archiveHint = new QLabel(QStringLiteral("Esc / Backspace"), archiveHeader);
-    m_archiveHint->setStyleSheet(QStringLiteral("color: %1;").arg(Theme::Colors::Dim().name()));
-    archiveHeaderLayout->addWidget(m_archiveHint, 0, Qt::AlignVCenter);
     archiveHeaderLayout->addStretch(1);
     archiveLayout->addWidget(archiveHeader);
 
@@ -909,6 +914,8 @@ void MillerViewContainer::setupUi() {
     });
     connect(m_archiveTree, &ArchiveTreeWidget::messageRequested,
             this, &MillerViewContainer::messageEmitted);
+    connect(m_archiveTree, &ArchiveTreeWidget::entrySelected,
+            this, &MillerViewContainer::onArchiveEntrySelected);
 
     // подключаем изменения выделения и курсора
     connect(m_centerView->selectionModel(), &QItemSelectionModel::selectionChanged,
@@ -1038,7 +1045,8 @@ void MillerViewContainer::setupUi() {
     // Plugins из меню превью: общий путь исполнения с колонками
     connect(m_previewPane, &PreviewPane::pluginRunRequested, this,
             [this](const QString& id, const std::filesystem::path& target, const std::filesystem::path& cwd) {
-        runPluginByIdIn(id, {target}, cwd.empty() ? target.parent_path() : cwd);
+        runPluginByIdIn(id, {target}, cwd.empty() ? target.parent_path() : cwd,
+                        QString(), false, true);
     });
     connect(m_previewPane, &PreviewPane::archiveSelectionInteractionStarted,
             this, &MillerViewContainer::activateArchiveSelection);
@@ -1203,11 +1211,11 @@ void MillerViewContainer::setupUi() {
             showPropertiesFor(sel.empty() ? parentDir : sel.front());
         });
         connect(menu, &TuiContextMenu::pluginRequested, this, [this, sel, parentDir](const QString& id) {
-            runPluginByIdIn(id, sel, parentDir);
+            runPluginByIdIn(id, sel, parentDir, QString(), false, true);
         });
         connect(menu, &TuiContextMenu::nativeActionRequested, this,
                 [this, sel, parentDir](const QString& actionId) {
-            NativePluginHost::instance().invokeAction(actionId, sel, parentDir);
+            NativePluginHost::instance().invokeAction(actionId, sel, parentDir, QString(), true);
         });
         menu->popup(globalPos);
     });
@@ -2022,7 +2030,6 @@ void MillerViewContainer::refresh() {
 
 void MillerViewContainer::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    if (m_pluginPanes && m_pluginPanes->isVisible()) m_pluginPanes->repositionWithinParent();
     applyResponsiveSizes();
 }
 
@@ -2152,6 +2159,7 @@ int MillerViewContainer::previewColumnWidth() const {
 
 void MillerViewContainer::applyResponsiveSizes() {
     if (!m_splitter || !m_previewPane || !m_parentView || !m_centerView) return;
+    if (m_viewStack && m_viewStack->currentWidget() != m_splitter) return;
     int total = width();
     if (total <= 0) return;
 
@@ -2371,12 +2379,72 @@ void MillerViewContainer::openFile(const std::filesystem::path& path) {
     Core::XdgUtils::openWithDefault(path);
 }
 
+void MillerViewContainer::onArchiveEntrySelected(const QString& normalizedPath,
+                                                 const QString& memberPath, bool isDir) {
+    if (!isArchiveViewActive() || !m_previewPane) return;
+    ++m_archivePreviewRequest;
+    m_archivePreviewQueued = false;
+    if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
+    if (isDir || normalizedPath.isEmpty() || memberPath.isEmpty()) {
+        m_archivePreviewPendingPath.clear();
+        m_archivePreviewPendingMember.clear();
+        m_previewPane->clearPreview();
+        return;
+    }
+    m_archivePreviewPendingPath = normalizedPath;
+    m_archivePreviewPendingMember = memberPath;
+    if (!m_archivePreviewTimer) {
+        m_archivePreviewTimer = new QTimer(this);
+        m_archivePreviewTimer->setSingleShot(true);
+        m_archivePreviewTimer->setInterval(200);
+        connect(m_archivePreviewTimer, &QTimer::timeout, this, [this]() {
+            if (!isArchiveViewActive() || m_archivePreviewPendingPath.isEmpty()) return;
+            if (m_archivePreviewBusy) {
+                m_archivePreviewQueued = true;
+                return;
+            }
+            if (m_archiveTree->isExtracting()) {
+                m_archivePreviewTimer->start();
+                return;
+            }
+            const quint64 request = m_archivePreviewRequest;
+            const QString normalized = m_archivePreviewPendingPath;
+            const QString member = m_archivePreviewPendingMember;
+            m_archivePreviewBusy = true;
+            std::filesystem::path real;
+            QString error;
+            const bool ok = m_archiveTree->extractEntryForPreview(normalized, member, real, error);
+            m_archivePreviewBusy = false;
+            if (request == m_archivePreviewRequest && isArchiveViewActive()) {
+                if (ok) {
+                    m_previewPane->previewPath(real);
+                } else {
+                    m_previewPane->clearPreview();
+                    if (!error.isEmpty()) emit messageEmitted(error);
+                }
+            }
+            if (m_archivePreviewQueued) {
+                m_archivePreviewQueued = false;
+                if (isArchiveViewActive() && !m_archivePreviewPendingPath.isEmpty()) {
+                    m_archivePreviewTimer->start();
+                }
+            }
+        });
+    }
+    m_archivePreviewTimer->start();
+}
+
 void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath) {
     if (archivePath.empty() || !m_centerStack || !m_archiveTree || !m_archiveModel) return;
     std::error_code ec;
     if (!std::filesystem::is_regular_file(archivePath, ec) || ec) return;
 
     m_archivePath = archivePath;
+    if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
+    ++m_archivePreviewRequest;
+    m_archivePreviewQueued = false;
+    m_archivePreviewPendingPath.clear();
+    m_archivePreviewPendingMember.clear();
     // файловые операции/Escape не должны действовать на скрытый архив под страницей
     if (m_centerModel) m_centerModel->clearSelection();
     if (m_centerView) {
@@ -2418,6 +2486,12 @@ void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath)
 void MillerViewContainer::leaveArchive() {
     if (m_archivePath.empty()) return;
     m_archivePath.clear();
+    if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
+    ++m_archivePreviewRequest;
+    m_archivePreviewQueued = false;
+    m_archivePreviewPendingPath.clear();
+    m_archivePreviewPendingMember.clear();
+    if (m_previewPane) m_previewPane->clearPreview();
     if (m_archiveTree) m_archiveTree->clearArchive();
     if (m_centerStack) m_centerStack->setCurrentWidget(m_centerView);
     // возвращаем левую колонку к родителю текущего каталога
@@ -3011,64 +3085,157 @@ bool MillerViewContainer::tryPluginOverrideWith(
 }
 
 void MillerViewContainer::runPluginById(const QString& pluginId) {
-    runPluginByIdIn(pluginId, selectedPaths(), m_currentDir);
+    runPluginByIdIn(pluginId, selectedPaths(), m_currentDir, QString(), false, true);
 }
 
 void MillerViewContainer::runPluginCommand(const QString& pluginId, const QString& query) {
     runPluginByIdIn(pluginId, selectedPaths(), m_currentDir, query, true);
 }
 
-void MillerViewContainer::beginPluginPanes(const QString& title) {
-    if (!m_pluginPanes) {
-        m_pluginPanes = new TuiPanesOverlay(this);
-        connect(m_pluginPanes, &TuiPanesOverlay::closed, this, &MillerViewContainer::focusCenter);
+void MillerViewContainer::beginPluginPanes(const QString& title, bool preview) {
+    if (!m_pluginPanes || !m_viewStack) return;
+    m_pluginPanesTitle = title;
+    m_pluginPreview = preview;
+    m_pluginPanes->begin();
+    m_viewStack->setCurrentWidget(m_pluginPanes);
+    if (!preview) {
+        m_pluginPanes->focusCenterPane();
+        emit messageEmitted(QStringLiteral("Plugin: %1").arg(title));
     }
-    m_pluginPanes->begin(title);
+    QTimer::singleShot(0, this, [this]() {
+        if (!isPluginPanesVisible()) return;
+        applyPluginPaneSizes();
+    });
+}
+
+void MillerViewContainer::schedulePluginPreview(const QString& pluginId, const QString& query) {
+    const Core::Plugins::Plugin plugin = Core::Plugins::findById(pluginId);
+    if (plugin.id.isEmpty() || plugin.native || plugin.detach ||
+        plugin.commandMode != QLatin1String("query")) {
+        cancelPluginPreview(true);
+        return;
+    }
+    m_pluginPreviewPluginId = pluginId;
+    m_pluginPreviewQuery = query;
+    if (!m_pluginPreviewTimer) {
+        m_pluginPreviewTimer = new QTimer(this);
+        m_pluginPreviewTimer->setSingleShot(true);
+        m_pluginPreviewTimer->setInterval(200);
+        connect(m_pluginPreviewTimer, &QTimer::timeout, this, [this]() {
+            const QString id = m_pluginPreviewPluginId;
+            const QString pending = m_pluginPreviewQuery;
+            if (id.isEmpty()) return;
+            cancelPluginPreview(false);
+            runPluginByIdIn(id, selectedPaths(), m_currentDir, pending, true, false, true);
+        });
+    }
+    m_pluginPreviewTimer->start();
+}
+
+void MillerViewContainer::cancelPluginPreview(bool closePage, bool focusPage) {
+    const bool active = m_pluginPreview || !m_pluginPreviewPluginId.isEmpty() ||
+                        (m_pluginPreviewTimer && m_pluginPreviewTimer->isActive());
+    if (!active) return;
+    if (m_pluginPreviewTimer) m_pluginPreviewTimer->stop();
+    ++m_pluginRunGeneration;
+    if (m_pluginPreviewProcess) {
+        if (auto* proc = qobject_cast<QProcess*>(m_pluginPreviewProcess.data())) {
+            proc->kill();
+            proc->deleteLater();
+        } else {
+            m_pluginPreviewProcess->deleteLater();
+        }
+        m_pluginPreviewProcess.clear();
+    }
+    m_pluginPreviewPluginId.clear();
+    m_pluginPreviewQuery.clear();
+    const bool wasPreview = m_pluginPreview;
+    m_pluginPreview = false;
+    if (closePage && wasPreview) closePluginPanes(focusPage);
+}
+
+bool MillerViewContainer::isPluginPreviewActive() const {
+    return m_pluginPreview;
+}
+
+void MillerViewContainer::applyPluginPaneSizes() {
+    if (!m_pluginPanes || !m_splitter) return;
+    QList<int> current = m_splitter->sizes();
+    while (current.size() < 3) current.append(0);
+    int base[3] = {current[0], current[1], current[2]};
+    if (base[0] <= 0) base[0] = m_parentColumnWidth > 0 ? m_parentColumnWidth : 300;
+    if (base[1] <= 0) base[1] = 480;
+    if (base[2] <= 0) base[2] = m_previewColumnWidth > 0 ? m_previewColumnWidth : 420;
+
+    const int available = std::max(0, m_pluginPanes->width() - 2 * 2);
+    const int total = base[0] + base[1] + base[2];
+    QList<int> sizes;
+    for (int i = 0; i < 3; ++i) {
+        const int value = total > 0 ? int(qint64(base[i]) * available / total) : available / 3;
+        sizes.append(std::max(40, value));
+    }
+    m_pluginPanes->setPaneSizes(sizes);
 }
 
 void MillerViewContainer::appendPluginPanesOutput(const QByteArray& data) {
-    if (m_pluginPanes) m_pluginPanes->appendOutput(data);
+    if (!isPluginPanesVisible()) return;
+    m_pluginPanes->appendOutput(data);
 }
 
 void MillerViewContainer::appendPluginPaneOutput(int pane, const QByteArray& data) {
-    if (m_pluginPanes) m_pluginPanes->appendPane(pane, data);
+    if (!isPluginPanesVisible()) return;
+    m_pluginPanes->appendPane(pane, data);
 }
 
-void MillerViewContainer::finishPluginPanes(int exitCode) {
-    if (m_pluginPanes) m_pluginPanes->finish(exitCode);
+void MillerViewContainer::finishPluginPanes(int exitCode, bool preview) {
+    if (!m_pluginPanes) return;
+    m_pluginPanes->finish(exitCode);
+    if (preview) return;
+    emit messageEmitted(exitCode == 0
+        ? QStringLiteral("Plugin %1 done").arg(m_pluginPanesTitle)
+        : QStringLiteral("Plugin %1 failed: exit %2").arg(m_pluginPanesTitle).arg(exitCode));
 }
 
-void MillerViewContainer::closePluginPanes() {
-    if (m_pluginPanes) m_pluginPanes->closeOverlay();
+void MillerViewContainer::closePluginPanes(bool focusPage) {
+    cancelPluginPreview(false);
+    if (!m_viewStack || !m_splitter) return;
+    m_viewStack->setCurrentWidget(m_splitter);
+    if (m_pluginPanes) m_pluginPanes->reset();
+    if (focusPage) focusCenter();
+    QTimer::singleShot(0, this, [this]() { relayoutColumns(); });
 }
 
 bool MillerViewContainer::isPluginPanesVisible() const {
-    return m_pluginPanes && m_pluginPanes->isVisible();
+    return m_viewStack && m_pluginPanes && m_viewStack->currentWidget() == m_pluginPanes;
 }
 
 void MillerViewContainer::runNativePluginAction(const QString& actionId) {
-    NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir);
+    NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir, QString(), true);
 }
 
 void MillerViewContainer::runNativePluginCommand(const QString& actionId, const QString& query) {
-    NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir, query, true);
+    NativePluginHost::instance().invokeAction(actionId, selectedPaths(), m_currentDir, query, false);
 }
 
 void MillerViewContainer::runPluginByIdIn(const QString& pluginId,
                                           const std::vector<std::filesystem::path>& selection,
                                           const std::filesystem::path& cwd,
                                           const QString& query,
-                                          bool commandOutput) {
+                                          bool commandOutput,
+                                          bool allowQueryPrompt,
+                                          bool preview) {
     const Core::Plugins::Plugin plugin = Core::Plugins::findById(pluginId);
     if (plugin.id.isEmpty()) return;
+    if (preview && (plugin.native || plugin.detach ||
+                    plugin.commandMode != QLatin1String("query"))) return;
 
-    // нативные плагины и прямой вызов внутри процесса вместо запуска отдельного процесса
+    if (!preview) cancelPluginPreview(true);
+
     if (plugin.native) {
-        NativePluginHost::instance().invokeAction(plugin.action, selection, cwd, query, commandOutput);
+        NativePluginHost::instance().invokeAction(plugin.action, selection, cwd, query, allowQueryPrompt);
         return;
     }
 
-    // пустое выделение на фоне и плагин работает с самим каталогом
     std::vector<std::filesystem::path> targets = selection;
     if (targets.empty()) targets.push_back(cwd);
 
@@ -3087,54 +3254,79 @@ void MillerViewContainer::runPluginByIdIn(const QString& pluginId,
         return;
     }
 
-    QPointer<TuiOutputOverlay> overlay;
-    if (!commandOutput) {
-        // оверлей вывода один на окно в правом нижнем углу и не забирает фокус
-        QWidget* host = window() ? window() : this;
-        overlay = host->findChild<TuiOutputOverlay*>(QStringLiteral("tuiOutputOverlay"));
-        if (!overlay) overlay = new TuiOutputOverlay(host);
+    QString queryText = query;
+    if (!preview && allowQueryPrompt && queryText.isEmpty() &&
+        plugin.commandMode == QLatin1String("query") && !plugin.command.isEmpty()) {
+        bool ok = false;
+        const QString promptTitle = plugin.commandTitle.isEmpty() ? plugin.name : plugin.commandTitle;
+        const QString promptLabel = !plugin.commandDescription.isEmpty()
+            ? plugin.commandDescription
+            : (!plugin.commandPlaceholder.isEmpty() ? plugin.commandPlaceholder : QStringLiteral("Query:"));
+        schedulePluginPreview(plugin.id, QString());
+        queryText = TuiInputPopup::getText(this, promptTitle, promptLabel, QString(), &ok,
+                                           QPoint(), false, false,
+                                           [this, previewId = plugin.id](const QString& text) {
+                                               schedulePluginPreview(previewId, text);
+                                           });
+        if (!ok) {
+            cancelPluginPreview(true);
+            return;
+        }
+        cancelPluginPreview(true);
     }
 
     QString err;
-    QProcess* proc = Core::Plugins::spawn(plugin, paths, cwdQ, this, &err, query);
+    QProcess* proc = Core::Plugins::spawn(plugin, paths, cwdQ, this, &err, queryText);
     if (!proc) {
-        TuiConfirmPopup::alert(this, "Plugin Error", err);
+        if (!preview) TuiConfirmPopup::alert(this, "Plugin Error", err);
         return;
     }
 
-    if (commandOutput)
-        beginPluginPanes(plugin.commandTitle.isEmpty() ? plugin.name : plugin.commandTitle);
-    else if (overlay)
-        overlay->begin(plugin.name);
-    emit messageEmitted("Plugin: " + plugin.name);
+    const QString title = plugin.commandTitle.isEmpty() ? plugin.name : plugin.commandTitle;
+    ++m_pluginRunGeneration;
+    const quint64 generation = m_pluginRunGeneration;
+    auto begun = std::make_shared<bool>(false);
+    if (commandOutput) {
+        beginPluginPanes(title, preview);
+        *begun = true;
+    }
+    if (preview) m_pluginPreviewProcess = proc;
 
-    QPointer<MillerViewContainer> self(this);
-    connect(proc, &QProcess::readyRead, this, [proc, overlay, self, commandOutput]() {
+    connect(proc, &QProcess::readyRead, this, [this, proc, generation, begun, title, preview]() {
         const QByteArray chunk = proc->readAll();
-        if (commandOutput) {
-            if (self) self->appendPluginPanesOutput(chunk);
-        } else if (overlay) {
-            overlay->appendOutput(chunk);
+        if (chunk.isEmpty() || generation != m_pluginRunGeneration) return;
+        if (!*begun) {
+            beginPluginPanes(title, preview);
+            *begun = true;
         }
+        appendPluginPanesOutput(chunk);
     });
-    const QString name = plugin.name;
     connect(proc, &QProcess::finished, this,
-            [self, overlay, name, proc, commandOutput](int exitCode, QProcess::ExitStatus) {
+            [this, proc, generation, begun, title, preview](int exitCode, QProcess::ExitStatus) {
         const QByteArray tail = proc->readAll();
-        if (commandOutput) {
-            if (self) {
-                self->appendPluginPanesOutput(tail);
-                self->finishPluginPanes(exitCode);
+        if (generation == m_pluginRunGeneration) {
+            if (!tail.isEmpty()) {
+                if (!*begun) {
+                    beginPluginPanes(title, preview);
+                    *begun = true;
+                }
+                appendPluginPanesOutput(tail);
             }
-        } else if (overlay) {
-            overlay->appendOutput(tail);
-            overlay->finish(exitCode);
+            if (*begun) {
+                finishPluginPanes(exitCode, preview);
+            } else if (!preview) {
+                emit messageEmitted(exitCode == 0
+                    ? QStringLiteral("Plugin %1 done").arg(title)
+                    : QStringLiteral("Plugin %1 failed: exit %2").arg(title).arg(exitCode));
+            }
+        }
+        if (preview) {
+            if (m_pluginPreviewProcess == proc) m_pluginPreviewProcess.clear();
+            proc->deleteLater();
+            return;
         }
         proc->deleteLater();
-        if (!self) return;
-        self->refresh();
-        self->messageEmitted(exitCode == 0 ? "Plugin " + name + " done"
-                                           : "Plugin " + name + " failed");
+        refresh();
     });
 }
 

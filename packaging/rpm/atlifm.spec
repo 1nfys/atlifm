@@ -1,5 +1,5 @@
 Name:           atlifm
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Terminal-style file manager with a GUI mouse-first workflow
 License:        MIT
@@ -96,6 +96,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/atlifm-portal.desktop
 %doc README.md
 
 %changelog
+* Sat Oct 24 2026 1nfys <lifawafla@gmail.com> - 1.0.2-1
+- New upstream release.
+
 * Wed Oct 21 2026 1nfys <lifawafla@gmail.com> - 1.0.1-1
 - New upstream release.
 

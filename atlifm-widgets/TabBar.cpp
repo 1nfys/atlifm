@@ -339,7 +339,7 @@ void EngineTabBar::leaveEvent(QEvent* /*event*/) {
 
 void EngineTabBar::dragEnterEvent(QDragEnterEvent* event) {
     if (Dnd::DragDropHandler::canAcceptDrop(event->mimeData())) {
-        event->acceptProposedAction();
+        Dnd::DragDropHandler::acceptDrag(event);
     } else {
         event->ignore();
     }
@@ -361,7 +361,7 @@ void EngineTabBar::dragMoveEvent(QDragMoveEvent* event) {
             m_dragSwitchTimer->stop();
         }
     }
-    event->acceptProposedAction();
+    Dnd::DragDropHandler::acceptDrag(event);
 }
 
 void EngineTabBar::dragLeaveEvent(QDragLeaveEvent* /*event*/) {
@@ -388,8 +388,10 @@ void EngineTabBar::dropEvent(QDropEvent* event) {
     if (targetIdx >= 0 && targetIdx < static_cast<int>(m_tabs.size())) {
         auto paths = Dnd::DragDropHandler::extractPaths(event->mimeData());
         if (!paths.empty()) {
-            emit filesDroppedOnTab(targetIdx, paths, event->proposedAction(), event->modifiers());
-            event->acceptProposedAction();
+            const Qt::DropAction action = Dnd::DragDropHandler::effectiveAction(event);
+            event->setDropAction(action);
+            emit filesDroppedOnTab(targetIdx, paths, action, event->modifiers());
+            event->accept();
             return;
         }
         if (Dnd::DragDropHandler::handleMimeDrop(event->mimeData(), m_tabs[targetIdx].currentPath,

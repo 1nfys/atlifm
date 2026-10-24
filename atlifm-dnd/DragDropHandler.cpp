@@ -127,7 +127,6 @@ QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& pat
     QList<QUrl> urls;
     urls.reserve(paths.size());
     QByteArray gnomeCopiedData = "copy\n";
-    QString mozUrlText;
 
     for (const auto& p : paths) {
         std::error_code ec;
@@ -138,22 +137,12 @@ QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& pat
         QUrl url = QUrl::fromLocalFile(pathQ);
         urls.append(url);
         gnomeCopiedData += url.toEncoded() + "\n";
-
-        if (mozUrlText.isEmpty()) {
-            QString fnameQ = QString::fromUtf8(absPath.filename().c_str());
-            mozUrlText = url.toString() + "\n" + fnameQ;
-        }
     }
 
     // стандартный uri list и file transfer из портала xdg для браузеров и приложений
     mimeData->setUrls(urls);
     // совместимость с GTK / Nautilus / Thunar / Nemo
     mimeData->setData("x-special/gnome-copied-files", gnomeCopiedData.trimmed());
-    // совместимость с браузерами где url и имя в utf16
-    if (!mozUrlText.isEmpty()) {
-        QByteArray mozBytes(reinterpret_cast<const char*>(mozUrlText.utf16()), mozUrlText.size() * 2);
-        mimeData->setData("text/x-moz-url", mozBytes);
-    }
 
     drag->setMimeData(mimeData);
 
@@ -163,6 +152,21 @@ QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& pat
     drag->setHotSpot(QPoint(16, 16));
 
     return drag;
+}
+
+bool DragDropHandler::prefersMove(const QDropEvent* event) {
+    return event && event->mimeData()->hasFormat(kMovePreferredMime)
+        && (event->possibleActions() & Qt::MoveAction)
+        && !(event->modifiers() & Qt::ControlModifier);
+}
+
+Qt::DropAction DragDropHandler::effectiveAction(const QDropEvent* event) {
+    return prefersMove(event) ? Qt::MoveAction : event->proposedAction();
+}
+
+void DragDropHandler::acceptDrag(QDropEvent* event) {
+    event->setDropAction(effectiveAction(event));
+    event->accept();
 }
 
 QPixmap DragDropHandler::createDragPixmap(size_t itemCount, const QString& firstItemName) {

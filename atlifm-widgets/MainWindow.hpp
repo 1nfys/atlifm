@@ -62,6 +62,7 @@ public:
     void appendPluginPanesOutput(const QByteArray& data);
     void appendPluginPaneOutput(int pane, const QByteArray& data);
     void finishPluginPanes(int exitCode);
+    void closePluginPanes();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;

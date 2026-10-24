@@ -158,7 +158,7 @@ bool PortalService::start() {
 
     // автовыход, сервис не должен висеть в памяти вечно
     m_idleTimer = new QTimer(this);
-    m_idleTimer->setInterval(5 * 60 * 1000);
+    m_idleTimer->setInterval(60 * 1000);
     m_idleTimer->setSingleShot(true);
     connect(m_idleTimer, &QTimer::timeout, this, [this]() {
         if (m_sessions.isEmpty()) {

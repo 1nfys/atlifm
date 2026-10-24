@@ -772,7 +772,8 @@ void TuiStatusBar::finishInlinePrompt(int res) {
 }
 
 QString TuiStatusBar::askTextInline(const QString& label, const QString& initial,
-                                    bool selectStemOnly, bool* ok, bool isPassword) {
+                                    bool selectStemOnly, bool* ok, bool isPassword,
+                                    const std::function<void(const QString&)>& onTextChanged) {
     if (m_promptActive) {
         if (ok) *ok = false;
         return QString();
@@ -801,11 +802,18 @@ QString TuiStatusBar::askTextInline(const QString& label, const QString& initial
     m_promptCancelBtn->show();
     m_promptInput->setFocus();
 
+    QMetaObject::Connection liveConnection;
+    if (onTextChanged) {
+        liveConnection = connect(m_promptInput, &QLineEdit::textChanged, this,
+                                 [onTextChanged](const QString& text) { onTextChanged(text); });
+    }
+
     QEventLoop loop;
     m_promptLoop = &loop;
     m_promptResult = 0;
     loop.exec();
     m_promptLoop = nullptr;
+    if (liveConnection) disconnect(liveConnection);
 
     QString text = m_promptInput->text();
     bool accepted = (m_promptResult == 1);

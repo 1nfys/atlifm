@@ -7,6 +7,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPoint>
+#include <functional>
 
 namespace Widgets {
 
@@ -21,7 +22,8 @@ public:
 
     static QString getText(QWidget* parent, const QString& title, const QString& labelText,
                            const QString& initialText = QString(), bool* ok = nullptr,
-                           const QPoint& targetPos = QPoint(), bool selectStemOnly = false, bool isPassword = false);
+                           const QPoint& targetPos = QPoint(), bool selectStemOnly = false, bool isPassword = false,
+                           const std::function<void(const QString&)>& onTextChanged = {});
 
     int exec() override;
 

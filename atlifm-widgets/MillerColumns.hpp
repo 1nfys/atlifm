@@ -22,6 +22,8 @@
 
 namespace Models { class ArchiveModel; }
 
+class QTimer;
+
 namespace Widgets {
 
 class TuiContextMenu;
@@ -75,9 +77,7 @@ protected:
     virtual std::vector<std::filesystem::path> dragOutPaths(const QModelIndex& startIndex) const;
 
     // старт исходящего драга; страница архива переопределяет: сначала распаковка во временный кэш, потом QDrag
-    virtual void startDragOut(const std::vector<std::filesystem::path>& paths,
-                              Qt::KeyboardModifiers modifiers,
-                              Qt::DropAction defaultAction);
+    virtual void startDragOut(const std::vector<std::filesystem::path>& paths);
 
 private:
     enum class DragMode { None, BoxSelect, DragOut };
@@ -169,22 +169,25 @@ public:
     void bookmarkSelection();
     void showProperties();
     void showPropertiesFor(const std::filesystem::path& path);
-    // сторонние плагины (Core::Plugins) по id из меню Plugins: вывод в TuiOutputOverlay, после завершения refresh
     void runPluginById(const QString& pluginId); // центр: выделение + m_currentDir
     void runPluginByIdIn(const QString& pluginId,
                          const std::vector<std::filesystem::path>& selection,
                          const std::filesystem::path& cwd,
                          const QString& query = QString(),
-                         bool commandOutput = false);
+                         bool commandOutput = false,
+                         bool allowQueryPrompt = false,
+                         bool preview = false);
     void runPluginCommand(const QString& pluginId, const QString& query);
-    // кастомный вывод команды плагина в три текстовые панели поверх колонок
-    void beginPluginPanes(const QString& title);
+    void schedulePluginPreview(const QString& pluginId, const QString& query);
+    void cancelPluginPreview(bool closePage, bool focusPage = true);
+    bool isPluginPreviewActive() const;
+    void beginPluginPanes(const QString& title, bool preview = false);
     void appendPluginPanesOutput(const QByteArray& data);
     void appendPluginPaneOutput(int pane, const QByteArray& data);
-    void finishPluginPanes(int exitCode);
-    void closePluginPanes();
+    void finishPluginPanes(int exitCode, bool preview = false);
+    void closePluginPanes(bool focusPage = true);
     bool isPluginPanesVisible() const;
-    // действие плагина C++ (NativePluginHost): выделение центра + m_currentDir; сначала цепочка override
+    // действие плагина плюсов через хост нативных плагинов где берется выделение центра и текущая папка и сначала проверяется цепочка переопределений
     void runNativePluginAction(const QString& actionId);
     void runNativePluginCommand(const QString& actionId, const QString& query);
     // перехват действия плагином (Override = <id> в plugins/*.conf): вместо встроенной операции
@@ -275,6 +278,8 @@ private slots:
                         Qt::DropAction action,
                         Qt::KeyboardModifiers modifiers);
     void updateCenterSelection();
+    void onArchiveEntrySelected(const QString& normalizedPath, const QString& memberPath,
+                                bool isDir);
     void applyResponsiveSizes();
     void updateCenterDeniedOverlay(int count);
     void positionCenterDeniedOverlay();
@@ -285,6 +290,7 @@ protected:
 
 private:
     void setupUi();
+    void applyPluginPaneSizes();
     void activateArchiveSelection();
     void activateFileSelection();
     // открыть файл: архивы уходят в центральную страницу, остальное в приложение по умолчанию
@@ -295,6 +301,7 @@ private:
     // синхронизирует подсветку «открытой папки» в родительской колонке: приглушённая подсветка через делегат, current index без выделения
     void syncParentViewToCurrentDir();
 
+    QStackedWidget* m_viewStack{nullptr};
     QSplitter* m_splitter{nullptr};
     MillerListView* m_parentView{nullptr};
     MillerListView* m_centerView{nullptr};
@@ -341,11 +348,22 @@ private:
     ArchiveTreeWidget* m_archiveTree{nullptr};
     Models::ArchiveModel* m_archiveModel{nullptr};
     QPushButton* m_archiveBackBtn{nullptr};
-    QLabel* m_archiveHint{nullptr};
     std::filesystem::path m_archivePath;
+    QTimer* m_archivePreviewTimer{nullptr};
+    QString m_archivePreviewPendingPath;
+    QString m_archivePreviewPendingMember;
+    quint64 m_archivePreviewRequest{0};
+    bool m_archivePreviewBusy{false};
+    bool m_archivePreviewQueued{false};
 
-    // вывод команды плагина в три панели поверх колонок; живёт до Esc/Close
     TuiPanesOverlay* m_pluginPanes{nullptr};
+    QString m_pluginPanesTitle;
+    quint64 m_pluginRunGeneration{0};
+    QTimer* m_pluginPreviewTimer{nullptr};
+    QPointer<QObject> m_pluginPreviewProcess;
+    QString m_pluginPreviewPluginId;
+    QString m_pluginPreviewQuery;
+    bool m_pluginPreview{false};
 };
 
 }

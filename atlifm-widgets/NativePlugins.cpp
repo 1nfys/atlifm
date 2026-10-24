@@ -1,6 +1,6 @@
 #include "NativePlugins.hpp"
-#include "TuiOutputOverlay.hpp"
 #include "MainWindow.hpp"
+#include "TuiInputPopup.hpp"
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -279,21 +279,23 @@ bool NativePluginHost::runOverrideChain(const QString& actionId,
                                         const std::vector<std::filesystem::path>& selection,
                                         const std::filesystem::path& cwd,
                                         const QString& skipPluginId,
-                                        const QString& query,
-                                        bool commandOutput) {
+                                        const QString& query) {
     const QString id = actionId.trimmed().toLower();
     if (!Core::Plugins::isValidActionId(id) || Core::Plugins::isProtectedActionId(id))
         return false;
     for (const OverrideRecord& rec : m_overrides) {
         if (rec.actionId != id || !rec.run) continue;
         if (!skipPluginId.isEmpty() && rec.pluginId == skipPluginId) continue;
-        beginSession(pluginDisplayName(rec.pluginId), id, selection, cwd, query, commandOutput);
+        beginSession(pluginDisplayName(rec.pluginId), id, selection, cwd, query);
+        m_session.viaOverride = true;
         InvocationStorage st(QString(), id, cwd, selection, query);
         m_activePlugin = rec.pluginId;
         const int handled = rec.run(&st.inv, rec.user);
         m_activePlugin.clear();
+        const bool beganPanes = m_session.panesBegun;
         endSession(0);
         if (handled) return true;
+        if (beganPanes && m_window) m_window->closePluginPanes();
     }
     return false;
 }
@@ -302,17 +304,30 @@ bool NativePluginHost::invokeAction(const QString& actionId,
                                     const std::vector<std::filesystem::path>& selection,
                                     const std::filesystem::path& cwd,
                                     const QString& query,
-                                    bool commandOutput) {
+                                    bool allowQueryPrompt) {
     const ActionRecord* act = nullptr;
     for (const ActionRecord& a : m_actions)
         if (a.actionId == actionId) { act = &a; break; }
     if (!act) return false;
 
-    // действие плагина тоже перехватываемо другими плагинами
-    if (runOverrideChain(actionId, selection, cwd, act->pluginId, query, commandOutput)) return true;
+    QString effectiveQuery = query;
+    if (allowQueryPrompt && effectiveQuery.isEmpty() &&
+        act->commandMode == QLatin1String("query") && !act->command.isEmpty()) {
+        bool ok = false;
+        const QString title = act->commandTitle.isEmpty() ? act->name : act->commandTitle;
+        const QString label = !act->commandDescription.isEmpty()
+            ? act->commandDescription
+            : (!act->commandPlaceholder.isEmpty() ? act->commandPlaceholder : QStringLiteral("Query:"));
+        QWidget* parent = m_window ? static_cast<QWidget*>(m_window) : QApplication::activeWindow();
+        effectiveQuery = TuiInputPopup::getText(parent, title, label, QString(), &ok);
+        if (!ok) return true;
+    }
 
-    beginSession(act->name, actionId, selection, cwd, query, commandOutput);
-    InvocationStorage st(QString(), actionId, cwd, selection, query);
+    // действие плагина тоже перехватываемо другими плагинами
+    if (runOverrideChain(actionId, selection, cwd, act->pluginId, effectiveQuery)) return true;
+
+    beginSession(act->name, actionId, selection, cwd, effectiveQuery);
+    InvocationStorage st(QString(), actionId, cwd, selection, effectiveQuery);
     m_activePlugin = act->pluginId;
     const int rc = act->run ? act->run(&st.inv, act->user) : 1;
     m_activePlugin.clear();
@@ -364,37 +379,23 @@ void NativePluginHost::triggerHook(const QString& event, const QStringList& path
     m_activePlugin.clear();
 }
 
-// сессия вывода (оверлей)
-
-TuiOutputOverlay* NativePluginHost::ensureOverlay() {
-    QWidget* host = m_window ? static_cast<QWidget*>(m_window) : QApplication::activeWindow();
-    if (!host) return nullptr;
-    auto* overlay = host->findChild<TuiOutputOverlay*>(QStringLiteral("tuiOutputOverlay"));
-    if (!overlay) overlay = new TuiOutputOverlay(host);
-    return overlay;
-}
-
 void NativePluginHost::beginSession(const QString& title, const QString& actionId,
                                     const std::vector<std::filesystem::path>& selection,
                                     const std::filesystem::path& cwd,
-                                    const QString& query,
-                                    bool commandOutput) {
+                                    const QString& query) {
     m_session.context = true;
-    m_session.begun = false;
-    m_session.commandOutput = commandOutput;
     m_session.panesBegun = false;
+    m_session.viaOverride = false;
     m_session.title = title;
     m_session.actionId = actionId;
     m_session.cwd = QString::fromUtf8(cwd.c_str());
     m_session.query = query;
     m_session.selection.clear();
     for (const auto& p : selection) m_session.selection.append(QString::fromUtf8(p.c_str()));
-    m_session.overlay = nullptr;
     m_session.pending = 0;
     m_session.runReturned = false;
     m_session.runResult = 0;
     ++m_session.generation;
-    if (m_session.commandOutput) ensurePanesBegun();
 }
 
 void NativePluginHost::endSession(int result) {
@@ -406,7 +407,8 @@ void NativePluginHost::endSession(int result) {
 }
 
 void NativePluginHost::ensurePanesBegun() {
-    if (!m_session.context || !m_session.commandOutput || m_session.panesBegun) return;
+    if (m_session.panesBegun) return;
+    if (!m_session.context && m_session.pending == 0) return;
     if (!m_window) return;
     m_window->beginPluginPanes(m_session.title);
     m_session.panesBegun = true;
@@ -414,40 +416,28 @@ void NativePluginHost::ensurePanesBegun() {
 
 void NativePluginHost::tryFinishSession() {
     if (m_session.context || !m_session.runReturned || m_session.pending > 0) return;
-    if (m_session.commandOutput) {
-        if (m_session.panesBegun && m_window) m_window->finishPluginPanes(m_session.runResult);
-    } else if (m_session.begun && m_session.overlay) {
-        m_session.overlay->finish(m_session.runResult);
+    if (m_session.panesBegun && m_window) {
+        m_window->finishPluginPanes(m_session.runResult);
+    } else if (!m_session.viaOverride) {
+        emit messageEmitted(m_session.runResult == 0
+            ? QStringLiteral("Plugin %1 done").arg(m_session.title)
+            : QStringLiteral("Plugin %1 failed: exit %2").arg(m_session.title).arg(m_session.runResult));
     }
-    m_session.begun = false;
+    m_session.runReturned = false;
     m_session.panesBegun = false;
-    m_session.overlay = nullptr;
     m_session.selection.clear();
 }
 
 void NativePluginHost::sessionAppend(const QByteArray& data) {
-    if (!m_session.context || data.isEmpty()) return;
-    if (m_session.commandOutput) {
-        ensurePanesBegun();
-        if (m_window) m_window->appendPluginPanesOutput(data);
-        return;
-    }
-    if (!m_session.begun) {
-        TuiOutputOverlay* ov = ensureOverlay();
-        if (ov) {
-            ov->begin(m_session.title);
-            m_session.overlay = ov;
-            m_session.begun = true;
-        }
-        if (!m_session.begun) return;
-    }
-    if (m_session.overlay) m_session.overlay->appendOutput(data);
+    if (data.isEmpty()) return;
+    if (!m_session.context && m_session.pending == 0) return;
+    ensurePanesBegun();
+    if (m_window) m_window->appendPluginPanesOutput(data);
 }
 
 void NativePluginHost::sessionAppendPane(int pane, const QByteArray& data) {
-    if (!m_session.context || data.isEmpty() || pane < 0 || pane > 2) return;
-    // явная запись в панель переключает вывод в режим трех панелей
-    m_session.commandOutput = true;
+    if (data.isEmpty() || pane < 0 || pane > 2) return;
+    if (!m_session.context && m_session.pending == 0) return;
     ensurePanesBegun();
     if (m_window) m_window->appendPluginPaneOutput(pane, data);
 }

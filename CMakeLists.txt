@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(atlifm VERSION 1.0.1 LANGUAGES CXX)
+project(atlifm VERSION 1.0.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -95,12 +95,16 @@ add_executable(atlifm
     atlifm-widgets/TuiPanesOverlay.cpp
     atlifm-widgets/HelpDialog.hpp
     atlifm-widgets/HelpDialog.cpp
+    atlifm-widgets/FirstRunDialog.hpp
+    atlifm-widgets/FirstRunDialog.cpp
     atlifm-widgets/MillerColumns.hpp
     atlifm-widgets/MillerColumns.cpp
     atlifm-widgets/MainWindow.hpp
     atlifm-widgets/MainWindow.cpp
     atlifm-portal/PortalService.hpp
     atlifm-portal/PortalService.cpp
+    atlifm-portal/FileManagerService.hpp
+    atlifm-portal/FileManagerService.cpp
 )
 
 target_compile_options(atlifm PRIVATE

@@ -166,6 +166,9 @@ inline QString themeTemplate() {
     out += QStringLiteral("dark = %1\n")
                .arg(p.isDark ? QStringLiteral("true") : QStringLiteral("false"));
 
+    out += QStringLiteral("\n# First Launch\n");
+    out += QStringLiteral("first_run = true\n");
+
     out += QStringLiteral("\n# Window & Font\n");
     out += QStringLiteral("# window_width = 1200\n");
     out += QStringLiteral("# window_height = 750\n");

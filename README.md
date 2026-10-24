@@ -300,11 +300,13 @@ the binary lands in `~/.local/bin/atlifm`; make sure that directory is in `PATH`
 
 ### after installation
 
-the optional XDG portal setup makes atlifm the system file picker:
+one command makes atlifm the system file picker and the default file manager, including show in folder from telegram and browsers:
 
 ```bash
-atlifm --setup-portal
+atlifm --setdefault
 ```
+
+the individual steps are still available as `atlifm --setup-portal` and `atlifm --setup-file-manager`.
 
 ---
 
@@ -331,6 +333,8 @@ theme config is located at `~/.config/atlifm/theme.conf`: flat `key = #rrggbb` (
 **window & font:** `window_width` / `window_height` (default `1200` / `750`), `sidebar_width` (default `180`), `font_family` (default auto: JetBrainsMono Nerd Font → JetBrainsMono NF → DejaVu Sans Mono), `font_size` in px (default `13`, scales UI text and direct-drawn rows/tabs).
 
 **layout:** `show_tabs` (default `true`), `show_bookmarks` (`true`), `show_status_bar` (`true`), `show_parent_column` (`true`), `show_preview` (`true`), `parent_column_width` (`300`), `preview_width` (`420`). automatic narrow-window collapsing only applies to columns that are enabled, and `Ctrl+B` still toggles the sidebar for the current session.
+
+**first run:** `first_run` (default `true`) controls the one-time default-file-manager prompt; set it to `false` to skip the prompt or back to `true` to show it again.
 
 `Ctrl+Shift+S` saves the sidebar/column widths (including previews wider than 1000 px) and panel visibility to `~/.config/atlifm/layout.ini`; the status bar confirms `Layout saved`. On floating WMs the window size is saved too. `layout.ini` overrides `theme.conf` on the next start and restores the exact saved column widths. `Ctrl+Shift+R` removes `layout.ini`, restores the `theme.conf` values immediately and shows `Layout default`. Under Hyprland/Sway/i3/Niri/River the compositor owns the window size, so atlifm does not call `resize()` once the window is shown (including after a layout reset) and the window always fills its current tile.
 
@@ -372,7 +376,7 @@ Detach = false                # true: launch detached without capturing output (
 Description = Open in VS Code
 ```
 
-on launch plugin receives current directory in `ATLIFM_DIR`, selected paths in `ATLIFM_SELECTION` (one per line) and arguments. additionally: `ATLIFM_FILE` (first selected path, empty if none), `ATLIFM_TARGET` (first selected path, fallback: current directory), `ATLIFM_PID` and `ATLIFM_ACTION` (action id when the plugin runs as `Override`). action output is streamed into the bottom-right overlay (Esc closes it); Ctrl+F command output uses the three-pane view described below.
+on launch plugin receives current directory in `ATLIFM_DIR`, selected paths in `ATLIFM_SELECTION` (one per line) and arguments. additionally: `ATLIFM_FILE` (first selected path, empty if none), `ATLIFM_TARGET` (first selected path, fallback: current directory), `ATLIFM_PID` and `ATLIFM_ACTION` (action id when the plugin runs as `Override`). action output and Ctrl+F command output are streamed into the three-pane view in place of the file columns (Esc returns to the columns).
 
 custom actions and overriding built-in operations (all keys optional):
 
@@ -394,9 +398,9 @@ CommandDescription = Search the current selection
 CommandPlaceholder = pattern
 ```
 
-typing `find pattern` highlights `find` as a command token and Enter runs the plugin with `pattern` in the query argument (`ATLIFM_QUERY` for external plugins, the `query` argument for native plugins). Esc leaves the token as ordinary filter text. plugin command tokens cannot override the built-in `fd` and `rg` tokens.
+typing `find pattern` highlights `find` as a command token and Enter runs the plugin with `pattern` in the query argument (`ATLIFM_QUERY` for external plugins, the `query` argument for native plugins). Esc leaves the token as ordinary filter text. plugin command tokens cannot override the built-in `fd` and `rg` tokens. running a query-mode plugin from the Plugins menu, a custom action or its shortcut asks for the query first; cancelling the prompt does not start the plugin.
 
-plugin command output opens a three-pane text view over the file columns. External plugins place text in a pane with a line starting `@@pane:0` (parent), `@@pane:1` (center) or `@@pane:2` (preview); text before the first marker goes to the center pane. Native plugins can use `output_write` for the center pane or `output_write_pane(0..2, text)` for a specific pane. Arbitrary UTF-8 text and pseudographics are kept as is (no wrapping); Esc or Close dismisses the view.
+external query-mode plugins preview their output live while the query is typed, both after the `Ctrl+F` token and in the menu/action prompt, without pressing Enter. output opens a three-pane text view in place of the file columns. external plugins place text in a pane with a line starting `@@pane:0` (parent), `@@pane:1` (center) or `@@pane:2` (preview); text before the first marker goes to the center pane. native plugins can use `output_write` for the center pane or `output_write_pane(0..2, text)` for a specific pane. long lines wrap inside each pane; esc dismisses the view or cancels the prompt.
 
 preview plugins and hooks (all keys optional):
 
@@ -444,7 +448,7 @@ c++ -shared -fPIC -Iatlifm-core -O2 -o hello.so hello-plugin.cpp
 cp hello.so ~/.config/atlifm/plugins/
 ```
 
-the host API exposes action/override/preview/hook registration, status bar messages, output overlay streaming (`run_command` with `detach = 0`), three-pane command output (`output_write_pane`), `refresh()` and logging. plugins go through the same override dispatcher as `.conf` plugins (a same-named `.conf` wins) and never see sudo, polkit or portal flows. full example: `examples/hello-plugin/hello-plugin.cpp`.
+the host API exposes action/override/preview/hook registration, status bar messages, output streaming (`run_command` with `detach = 0`), three-pane command output (`output_write_pane`), `refresh()` and logging. plugins go through the same override dispatcher as `.conf` plugins (a same-named `.conf` wins) and never see sudo, polkit or portal flows. full example: `examples/hello-plugin/hello-plugin.cpp`.
 
 docs online: https://1nfys.github.io/atlifml/docs/welcome (user guide, configuration reference, plugin developer guide)
 

@@ -329,9 +329,17 @@ ArchiveTreeWidget::ArchiveTreeWidget(QWidget* parent)
             this, &ArchiveTreeWidget::showArchiveMenu);
     connect(this, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
-                if (m_preserveAnchor) return;
-                if (QApplication::keyboardModifiers() & Qt::ShiftModifier) return;
-                m_selectionAnchor = isEntryItem(current) ? current : nullptr;
+                if (!m_preserveAnchor &&
+                    !(QApplication::keyboardModifiers() & Qt::ShiftModifier)) {
+                    m_selectionAnchor = isEntryItem(current) ? current : nullptr;
+                }
+                if (!isEntryItem(current)) {
+                    emit entrySelected(QString(), QString(), true);
+                    return;
+                }
+                emit entrySelected(current->data(0, kEntryPathRole).toString(),
+                                   current->data(0, kMemberPathRole).toString(),
+                                   current->data(0, kIsDirRole).toBool());
             });
 }
 
@@ -432,6 +440,10 @@ bool ArchiveTreeWidget::hasSelectedEntries() const {
 }
 
 void ArchiveTreeWidget::copySelectedEntries() {
+    if (m_extracting) {
+        emit messageRequested(QStringLiteral("Extraction in progress"));
+        return;
+    }
     const QList<QTreeWidgetItem*> items = selectedItems();
     QStringList members;
     QStringList normalized;
@@ -551,6 +563,20 @@ void ArchiveTreeWidget::buildFromEntries(const std::vector<Core::XdgUtils::Archi
     viewport()->update();
 }
 
+bool ArchiveTreeWidget::extractEntryForPreview(const QString& normalizedPath,
+                                               const QString& memberPath,
+                                               std::filesystem::path& outPath,
+                                               QString& error) {
+    outPath.clear();
+    error.clear();
+    if (normalizedPath.isEmpty() || memberPath.isEmpty()) return false;
+    std::vector<std::filesystem::path> real;
+    if (!extractToCache({memberPath}, {normalizedPath}, false, real, error)) return false;
+    if (real.empty()) return false;
+    outPath = real.front();
+    return true;
+}
+
 void ArchiveTreeWidget::activateItem(QTreeWidgetItem* item) {
     if (!item) return;
     if (item->data(0, kIsDirRole).toBool()) {
@@ -562,6 +588,10 @@ void ArchiveTreeWidget::activateItem(QTreeWidgetItem* item) {
 
 void ArchiveTreeWidget::openEntry(QTreeWidgetItem* item) {
     if (!item) return;
+    if (m_extracting) {
+        emit messageRequested(QStringLiteral("Extraction in progress"));
+        return;
+    }
     const QString norm = item->data(0, kEntryPathRole).toString();
     const QString member = item->data(0, kMemberPathRole).toString();
     if (norm.isEmpty() || member.isEmpty()) return;
@@ -587,6 +617,15 @@ bool ArchiveTreeWidget::extractToCache(const QStringList& members, const QString
     outRealPaths.clear();
     outError.clear();
     if (m_archivePath.empty() || normalizedPaths.isEmpty()) return false;
+    if (m_extracting) {
+        outError = QStringLiteral("Extraction already in progress");
+        return false;
+    }
+    m_extracting = true;
+    struct ExtractionReset {
+        bool& flag;
+        ~ExtractionReset() { flag = false; }
+    } extractionReset{m_extracting};
 
     // прошлая распаковка могла остаться в фоне после отпускания кнопки и ждем ее чтобы не принять недописанные файлы за готовые
     const QString archiveKey = QString::fromUtf8(m_archivePath.c_str());
@@ -747,6 +786,10 @@ bool ArchiveTreeWidget::extractToCache(const QStringList& members, const QString
 }
 
 void ArchiveTreeWidget::startDrag(Qt::DropActions /*supportedActions*/) {
+    if (m_extracting) {
+        emit messageRequested(QStringLiteral("Extraction in progress"));
+        return;
+    }
     QList<QTreeWidgetItem*> items = selectedItems();
     if (items.isEmpty() && currentItem()) items << currentItem();
 

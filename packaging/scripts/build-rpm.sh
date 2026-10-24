@@ -7,7 +7,7 @@ proj=$(CDPATH= cd -- "$here/../.." && pwd)
 
 SRC=${1:-$proj}
 OUT=${2:-$proj/dist}
-VERSION=${VERSION:-1.0.1}
+VERSION=${VERSION:-1.0.2}
 RPMBUILD=${RPMBUILD:-rpmbuild}
 
 command -v "$RPMBUILD" >/dev/null 2>&1 || { echo "error: rpmbuild is required" >&2; exit 1; }
