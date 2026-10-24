@@ -60,7 +60,7 @@ void EngineTabBar::removeTab(int index) {
     }
 
     // индекс текущей вкладки правим до emit: удаление вкладки левее текущей
-    // сдвигает её позицию, без декремента currentChanged указывал бы на соседнюю
+    // сдвигает её позицию, без декремента currentchanged указывал бы на соседнюю
     if (index < m_currentIndex) {
         --m_currentIndex;
     } else if (m_currentIndex >= static_cast<int>(m_tabs.size())) {
@@ -187,8 +187,8 @@ void EngineTabBar::paintEvent(QPaintEvent* /*event*/) {
     // сплошной фон шапки как у колонок с файлами, панель вкладок не отдельная полоса другого цвета
     painter.fillRect(rect(), TabBg());
 
-    // шрифт вкладок как у строк файлов: действующий шрифт виджета из application QSS,
-    // фолбэк без QSS тот же моноширинный шрифт в 13px
+    // шрифт вкладок как у строк файлов: действующий шрифт виджета из application qss,
+    // фолбэк без qss тот же моноширинный шрифт в 13px
     QFont tabFont = font();
     if (tabFont.pixelSize() <= 0 && tabFont.pointSize() <= 0) {
         tabFont = Theme::getMonospaceFont(9);

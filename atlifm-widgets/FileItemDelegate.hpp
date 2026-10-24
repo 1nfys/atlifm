@@ -19,7 +19,7 @@ public:
     int dropTargetRow() const { return m_dropTargetRow; }
     void setContextMenuRow(int row) { m_contextMenuRow = row; }
     void setHighlightedPath(const std::filesystem::path& path) { m_highlightedPath = path; }
-    // галочка только при явном множественном выделении, боковые панели её не показывают, центральная при selCount > 1
+    // галочка только при явном множественном выделении, боковые панели её не показывают, центральная при selcount > 1
     void setCheckmarksEnabled(bool enabled) { m_checkmarksEnabled = enabled; }
 
 private:

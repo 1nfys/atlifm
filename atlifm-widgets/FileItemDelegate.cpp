@@ -24,7 +24,7 @@ void FileItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
 
     using namespace Theme::Colors;
 
-    // заливаем строку фоном Base, чтобы левый отступ и промежутки были чистыми
+    // заливаем строку фоном base, чтобы левый отступ и промежутки были чистыми
     painter->fillRect(option.rect, Base());
 
     // левый отступ для удобного выделения резиной и чистого выравнивания, плюс правый
@@ -106,7 +106,7 @@ void FileItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
         textColor = Text();
     }
 
-    // метаданные справа: размер, затем дата левее, прав доступа в строках нет (они в TuiStatusBar)
+    // метаданные справа: размер, затем дата левее, прав доступа в строках нет (они в tuistatusbar)
     QString sizeStr = index.data(Models::FileSystemModel::SizeRole).toString();
     QString dateStr = index.data(Models::FileSystemModel::DateRole).toString();
 

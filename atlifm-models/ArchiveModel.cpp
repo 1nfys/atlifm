@@ -16,8 +16,24 @@ ArchiveModel::ArchiveModel(QObject* parent)
 }
 
 ArchiveModel::~ArchiveModel() {
-    // фоновые результаты отбрасывает проверка generation, QPointer защищает от исчезнувшего объекта
+    // фоновые результаты отбрасывает проверка generation а pointer защищает от удаленного объекта
     m_generation++;
+}
+
+void ArchiveModel::clear() {
+    m_archivePath.clear();
+    m_entries.clear();
+    m_loading = false;
+    m_loaded = false;
+    m_truncated = false;
+    m_error.clear();
+    m_sigMtimeNs = -1;
+    m_sigSize = -1;
+    m_fileCount = 0;
+    m_dirCount = 0;
+    m_totalSize = 0;
+    ++m_generation;
+    emit archiveReset();
 }
 
 void ArchiveModel::setArchive(const std::filesystem::path& archivePath) {
@@ -49,11 +65,12 @@ void ArchiveModel::setArchive(const std::filesystem::path& archivePath) {
     emit archiveReset();
 
     QPointer<ArchiveModel> self(this);
-    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("io"))->start([self, generation, archivePath]() {
+    const bool allowPrompt = m_allowPrompt;
+    Core::Tasks::TaskManager::instance().poolForKind(QStringLiteral("io"))->start([self, generation, archivePath, allowPrompt]() {
         std::vector<Core::XdgUtils::ArchiveEntry> entries;
         bool truncated = false;
         QString err;
-        const bool ok = Core::XdgUtils::listArchive(archivePath, entries, truncated, err);
+        const bool ok = Core::XdgUtils::listArchive(archivePath, entries, truncated, err, allowPrompt);
         QMetaObject::invokeMethod(qApp, [self, generation, ok, err,
                                          entries = std::move(entries), truncated]() mutable {
             if (!self) return;
@@ -79,7 +96,7 @@ void ArchiveModel::applyListing(uint64_t generation, bool ok, const QString& err
         return;
     }
 
-    // одиночный поток без записей (.zst/.lz4, 7z не отдаёт path),
+    // одиночный поток без записей когда архиватор не отдает путь
     // синтезируем единственный файл из имени архива
     if (m_entries.empty() && Core::XdgUtils::isSingleStreamArchive(m_archivePath)) {
         Core::XdgUtils::ArchiveEntry e;

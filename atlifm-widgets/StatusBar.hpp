@@ -25,9 +25,9 @@ public:
 
     void setPath(const std::filesystem::path& path);
     void setItemStats(int currentIndex, int totalItems, int selectedItems);
-    // права текущего элемента в статусбаре в стиле yazi, в строках списка их нет (FileItemDelegate)
+    // права текущего элемента в статусбаре в стиле yazi, в строках списка их нет (fileitemdelegate)
     void setItemPerms(const QString& perms);
-    // скрыть счётчик файлов, в open files вместо него кнопки cancel/open (см. addTrailingWidget)
+    // скрыть счётчик файлов, в open files вместо него кнопки cancel/open (см. addtrailingwidget)
     void setItemStatsVisible(bool visible);
     // виджет в конец строки статусбара, правее всех бейджей
     void addTrailingWidget(QWidget* widget);
@@ -38,7 +38,7 @@ public:
     QString filterQuery() const { return m_filterQuery; }
     bool cancelFilterCommand();
     void setProgressMessage(const QString& msg, bool isFinished = true);
-    // агрегированный индикатор фоновых задач (TaskManager): "TASKS 2 · 45%"
+    // агрегированный индикатор фоновых задач (taskmanager): "tasks 2 · 45%"
     void setTaskSummary(const QString& summary);
     void setSudoBadge(bool visible);
     bool isSudoBadgeVisible() const;
@@ -53,10 +53,11 @@ public:
 
     void focusPathInput();
     bool isPromptActive() const { return m_promptActive; }
+    bool isPasswordPromptActive() const { return m_promptActive && m_promptIsPassword; }
     void cancelInlinePrompt() { finishInlinePrompt(0); }
 
     // режим одно окно: ввод, подтверждение и уведомление прямо в строке статусбара,
-    // отдельных окон нет, вызов блокируется локальным QEventLoop (как модальный)
+    // отдельных окон нет, вызов блокируется локальным qeventloop (как модальный)
     QString askTextInline(const QString& label, const QString& initial,
                           bool selectStemOnly, bool* ok, bool isPassword = false,
                           const std::function<void(const QString&)>& onTextChanged = {});
@@ -113,6 +114,7 @@ private:
     QEventLoop* m_promptLoop{nullptr};
     int m_promptResult{0}; // 0 = отклонено, 1 = принято
     bool m_promptActive{false};
+    bool m_promptIsPassword{false};
     bool m_promptWasFilterVisible{false};
     bool m_promptHidesPath{false};
     QPointer<QWidget> m_prevFocusWidget;

@@ -17,7 +17,11 @@
 #include "atlifm-portal/PortalService.hpp"
 #include "atlifm-widgets/FirstRunDialog.hpp"
 #include "atlifm-widgets/MainWindow.hpp"
+#include <QPixmapCache>
 #include <cstring>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace {
 
@@ -30,6 +34,13 @@ bool applyDefaultSetup() {
 }
 
 int main(int argc, char* argv[]) {
+#if defined(__GLIBC__)
+    // ограничиваем арены аллокатора чтобы фоновые потоки не раздували потребление памяти
+    mallopt(M_ARENA_MAX, 2);
+    mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+#endif
+    QPixmapCache::setCacheLimit(1024);
+
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--file-manager") == 0) {
             QCoreApplication app(argc, argv);

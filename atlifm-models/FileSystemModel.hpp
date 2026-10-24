@@ -113,12 +113,12 @@ public:
     static void removeInProgressPath(const std::filesystem::path& p);
     static bool isInProgress(const std::filesystem::path& p);
 
-    // листинг одного вызова root (sudo open или мутация) кладём в общий кэш XdgUtils,
+    // листинг одного вызова root (sudo open или мутация) кладём в общий кэш xdgutils,
     // скан читает его и не делает свой привилегированный вызов: pkexec спросил бы пароль второй раз
     void provideSudoListing(const std::filesystem::path& dir, const QString& findOutput);
 
     // единая точка формата find с printf для обоих вызовов и тестов:
-    // экранированный ноль это escape самого find а реальный байт NUL в argv невозможен
+    // экранированный ноль это escape самого find а реальный байт nul в argv невозможен
     static QString findPrintfFormat();
 
     bool isLoading() const { return m_isLoading; }
@@ -135,7 +135,7 @@ private:
     void applyGlobalResults(std::vector<FileItem> items);
     void stopGlobalProcess();
     // статическая: в пуле this не разыменовывается, модель может быть разрушена
-    // посреди скана; QPointer используется только при доставке результата
+    // посреди скана; qpointer используется только при доставке результата
     static void scanDirectoryAsync(std::filesystem::path dirPath, uint64_t scanId,
                                    std::shared_ptr<std::atomic<uint64_t>> scanCounter,
                                    QPointer<FileSystemModel> self, bool lightweight);
@@ -175,7 +175,7 @@ private:
     // протухания валидна даже после разрушения модели посреди скана (без uaf)
     std::shared_ptr<std::atomic<uint64_t>> m_scanCounter = std::make_shared<std::atomic<uint64_t>>(0);
 
-    // кэш листингов root живёт в потокобезопасном XdgUtils,
+    // кэш листингов root живёт в потокобезопасном xdgutils,
     // доступ из потока gui и из воркеров скана
 
     // true, пока скан каталога не доставил результат: очистка фильтра

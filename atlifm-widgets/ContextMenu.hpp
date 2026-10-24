@@ -18,7 +18,7 @@ signals:
     void openRequested();
     void openInNewTabRequested();
     void openWithAppRequested(const QString& execCmd);
-    // «Open With...» открывает полноразмерный диалог выбора приложения в центре окна, а не подменю
+    // «open with...» открывает полноразмерный диалог выбора приложения в центре окна, а не подменю
     void openWithRequested();
     void clearTrashRequested();
     void cutRequested();
@@ -29,7 +29,7 @@ signals:
     void trashRequested();
     void deletePermanentlyRequested();
     void compressRequested(const QString& format = "");
-    // Extract Here сразу в текущий каталог, Extract In с выбором каталога через FileChooserDialog
+    // extract here сразу в текущий каталог, extract in с выбором каталога через filechooserdialog
     void extractHereRequested();
     void extractInRequested();
     void openTerminalRequested();
@@ -38,9 +38,9 @@ signals:
     void bookmarkRequested();
     void propertiesRequested();
     void sortModeRequested(int mode); // 0 = имя, 1 = размер, 2 = дата, 3 = тип
-    // сторонний плагин из подменю Plugins, id это имя файла конфига без .conf (см. Core::Plugins)
+    // сторонний плагин из подменю plugins, id это имя файла конфига без .conf (см. core::plugins)
     void pluginRequested(const QString& pluginId);
-    // действие плагина C++ (NativePluginHost, *.so)
+    // действие плагина c++ (nativepluginhost, *.so)
     void nativeActionRequested(const QString& actionId);
 
 protected:

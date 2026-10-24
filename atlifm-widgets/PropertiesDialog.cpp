@@ -66,7 +66,7 @@ PropertiesDialog::~PropertiesDialog() {
 }
 
 int PropertiesDialog::exec() {
-    // мгновенный показ: NonModal + show() вместо ApplicationModal QDialog::exec()
+    // мгновенный показ: nonmodal + show() вместо applicationmodal qdialog::exec()
     setWindowModality(Qt::NonModal);
     setAttribute(Qt::WA_TranslucentBackground, false);
     show();
@@ -115,7 +115,7 @@ void PropertiesDialog::setPath(const std::filesystem::path& p) {
     loadFileInfo();
 }
 
-// заголовок секции: только название (Accent, bold), без рамок и ободков
+// заголовок секции: только название (accent, bold), без рамок и ободков
 namespace {
 QLabel* makeSectionHeader(const QString& title, QWidget* parent) {
     auto* lbl = new QLabel(parent);
@@ -211,8 +211,8 @@ void PropertiesDialog::setupUi() {
 
     mainLayout->addLayout(grid);
 
-    // Disk Usage консоль внутри диалога свойств, автоматически для корня
-    // диска/ФС; скан фоновый, UI не блокируется
+    // disk usage консоль внутри диалога свойств, автоматически для корня
+    // диска/фс; скан фоновый, ui не блокируется
     m_diskUsageGroup = new QWidget(this);
     m_diskUsageGroup->setObjectName(QStringLiteral("diskUsageGroup"));
     auto diskLayout = new QVBoxLayout(m_diskUsageGroup);
@@ -220,7 +220,7 @@ void PropertiesDialog::setupUi() {
     diskLayout->setSpacing(8);
     diskLayout->addWidget(makeSectionHeader(QStringLiteral("DISK USAGE"), m_diskUsageGroup));
 
-    // строка статуса скана над консолью: чип «scanning [бар] NN%» и вплотную
+    // строка статуса скана над консолью: чип «scanning [бар] nn%» и вплотную
     // к нему чип «needed sudo» + настоящее поле пароля (резерв, когда полкит
     // недоступен или отказал; в норме пароль спрашивает системный диалог pkexec)
     // живёт отдельным виджетом рядом с полосой прогресса, по умолчанию скрыта
@@ -296,7 +296,7 @@ void PropertiesDialog::setupUi() {
         "QTextEdit { background-color: %1; color: %2; border: 1px solid %3; border-radius: 0px; padding: 6px; }"
     ).arg(Base().name(), Text().name(), Surface1().name()));
     m_diskConsole->setMinimumHeight(200);
-    // контекстное меню консоли в стиле TUI приложения, а не системный попап ОС
+    // контекстное меню консоли в стиле tui приложения, а не системный попап ос
     m_diskConsole->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_diskConsole, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(m_diskConsole);
@@ -314,8 +314,8 @@ void PropertiesDialog::setupUi() {
     mainLayout->addWidget(m_diskUsageGroup);
 
 
-    // права: консольные маркеры TUI [ ] / [x], без системных галочек ОС (guideline 1.4)
-    // без рамки и ободка: заголовок только название, поверх обычного QWidget
+    // права: консольные маркеры tui [ ] / [x], без системных галочек ос (guideline 1.4)
+    // без рамки и ободка: заголовок только название, поверх обычного qwidget
     auto permGroup = new QWidget(this);
     permGroup->setStyleSheet(QString(
         "QCheckBox { background: transparent; spacing: 0px; color: %1; } "
@@ -380,8 +380,8 @@ void PropertiesDialog::setupUi() {
 
     m_applyBtn = new QPushButton("Apply Permissions", this);
     m_closeBtn = new QPushButton("Close", this);
-    // кнопки autoDefault отключены: Enter в инлайн поле пароля sudo не
-    // должен «нажимать» Apply/Close, submit только у самого поля
+    // кнопки autodefault отключены: enter в инлайн поле пароля sudo не
+    // должен «нажимать» apply/close, submit только у самого поля
     m_applyBtn->setAutoDefault(false);
     m_closeBtn->setAutoDefault(false);
 
@@ -461,7 +461,7 @@ void PropertiesDialog::loadFileInfo() {
         m_octalLabel->setText(QString("Octal: 0%1").arg(oct, 3, 8, QChar('0')));
     }
 
-    // Disk Usage: консоль автоматически для корня диска/ФС (и только для
+    // disk usage: консоль автоматически для корня диска/фс (и только для
     // каталогов); счётчик джобов отменяет результаты предыдущего скана
     if (m_diskUsageGroup) {
         if (isDir && m_diskUsageShown) {
@@ -475,7 +475,7 @@ void PropertiesDialog::loadFileInfo() {
             m_diskUsageGroup->hide();
         }
     }
-    // компактные свойства: вместо консоли только вес папки в поле Size
+    // компактные свойства: вместо консоли только вес папки в поле size
     if (isDir && !m_diskUsageShown) {
         startPathWeightScan();
     } else {
@@ -556,9 +556,9 @@ void PropertiesDialog::stopPathWeightProc() {
     m_weightProc = nullptr;
 }
 
-// Disk Usage: шапка ФС и заголовок таблицы видны сразу, `du` течёт
-// асинхронно (readyRead в поток GUI), веса папок и полоса прогресса
-// наполняются по ходу. Закрытые подпапки показываются «?» и измеряются
+// disk usage: шапка фс и заголовок таблицы видны сразу, `du` течёт
+// асинхронно (readyread в поток gui), веса папок и полоса прогресса
+// наполняются по ходу. закрытые подпапки показываются «?» и измеряются
 // последними (авторизация sudo или полкит ниже), без повторного полного
 // скана; если не вышло даже с sudo остаётся «?» и легенда в конце
 namespace {
@@ -567,14 +567,14 @@ constexpr int kDiskScanHardCapMs = 600000; // абсолютный лимит ф
 constexpr int kDiskBatchCapMs = 300000;    // мягкий лимит батча закрытых папок
 constexpr int kDiskRenderThrottleMs = 100; // троттлинг перерисовки таблицы
 constexpr int kDiskCapRearmMs = 5000;      // перезапуск таймера простоя не чаще
-constexpr int kDiskParallelMax = 8;        // одновременных du на медленных ФС
+constexpr int kDiskParallelMax = 8;        // одновременных du на медленных фс
 
 
 
-// stderr du: «Permission denied» для конкретных путей; полные строки копятся
+// stderr du: «permission denied» для конкретных путей; полные строки копятся
 // в buf (хвост дожидаётся следующего чанка), путь сворачивается до первого
 // компонента под корнем (сам корень флагом); true, если появилось новое
-// ограничение. Используется и одиночным du, и параллельной волной
+// ограничение. используется и одиночным du, и параллельной волной
 bool extractRestrictionsFromErr(QString& buf, const QString& rootClean,
                                 QSet<QString>& restricted, bool& rootRestricted) {
     bool newRestriction = false;
@@ -638,7 +638,7 @@ void PropertiesDialog::stopDiskUsageProc() {
 }
 
 // отдельный остановщик привилегированной фазы закрытых папок не нужен: её
-// процесс живёт в m_diskProc (общий потоковый парсер), stopDiskUsageProc гасит и его
+// процесс живёт в m_diskproc (общий потоковый парсер), stopdiskusageproc гасит и его
 
 void PropertiesDialog::startDiskUsageScan() {
     if (!m_diskConsole) return;
@@ -796,8 +796,8 @@ void PropertiesDialog::startDiskUsageScan() {
 }
 
 // гасит процессы текущей фазы (одиночный du и параллельная волна): по
-// сигналам finished фаза финализируется строками «?». Очередь волны
-// очищается до kill: иначе onParallelDuDone освободившегося слота запустил бы
+// сигналам finished фаза финализируется строками «?». очередь волны
+// очищается до kill: иначе onparalleldudone освободившегося слота запустил бы
 // следующие du, и кап (idle/жёсткий) не смог бы завершить фазу
 void PropertiesDialog::killDiskPhaseProcs() {
     m_diskParallelQueue.clear();
@@ -847,7 +847,7 @@ void PropertiesDialog::rearmDiskScanCapIfActive() {
     // полная фаза root только для закрытого корня когда листинг невозможен
     // без root: потоковый привилегированный du где живой тикет запускает sudo
     // молча иначе один pkexec системный диалог пароля а отказ диалога разбирает
-    // declineSudoAuthorization и повторно не спрашиваем
+    // declinesudoauthorization и повторно не спрашиваем
 void PropertiesDialog::startSudoDiskUsage() {
     const QStringList duCmd{"du", "-x", "-d", "1", "-b", "--null", "--", QString::fromUtf8(m_path.c_str())};
     startSudoPhaseProc(m_diskSudoPkexec ? Core::XdgUtils::pkexecArgs(duCmd)
@@ -859,7 +859,7 @@ void PropertiesDialog::startSudoDiskUsage() {
 // записи того же формата что у потокового du поэтому парсер и таблица общие
 void PropertiesDialog::startSudoBatch() {
     // путь du подставляется в скрипт sh, который исполняется как root:
-    // PATH пользователя не должен влиять на то, что запустится от root
+    // path пользователя не должен влиять на то, что запустится от root
     QString duExe = Core::XdgUtils::resolveTrustedExe(QStringLiteral("du"));
     if (duExe.isEmpty()) duExe = QStringLiteral("/usr/bin/du");
     const QString script = QStringLiteral(
@@ -873,7 +873,7 @@ void PropertiesDialog::startSudoBatch() {
                                         : Core::XdgUtils::rootArgs(cmd), true);
 }
 
-// общий запуск привилегированной фазы: процесс живёт в m_diskProc, поэтому
+// общий запуск привилегированной фазы: процесс живёт в m_diskproc, поэтому
 // парсер и таблица работают без отдельной ветки а batch равен true для закрытых
 // папок где запись появляется только в конце каталога поэтому
 // вместо капа по простою используется мягкий общий кап
@@ -935,7 +935,7 @@ void PropertiesDialog::startSudoPhaseProc(const QStringList& argv, bool batch) {
     }
 }
 
-// ================= параллельная волна: медленные ФС (NTFS/FUSE) =================
+// ================= параллельная волна: медленные фс (ntfs/fuse) =================
 
 // очередь подпапок первого уровня и одновременный запуск du
 // записи того же формата что у одиночного вызова поэтому таблица работает без изменений
@@ -993,7 +993,7 @@ void PropertiesDialog::spawnParallelDu() {
     armDiskScanCap(job, m_diskSudoPhase); // кап по простою следит и за волной
 }
 
-// поток stdout одного du волны: записи NUL держим в раздельном буфере процесса,
+// поток stdout одного du волны: записи nul держим в раздельном буфере процесса,
 // иначе частичные записи разных процессов в общем буфере склеились бы неверно
 void PropertiesDialog::onParallelDuOutput(QProcess* proc) {
     if (!m_diskParallelMode || !proc) return;
@@ -1060,8 +1060,8 @@ void PropertiesDialog::onParallelDuDone(QProcess* proc) {
     }
 }
 
-// разбор потока stdout du: записи NUL «<байты>\t<путь>» могут прийти
-// по частям, хвост держим в буфере до следующего readyRead
+// разбор потока stdout du: записи nul «<байты>\t<путь>» могут прийти
+// по частям, хвост держим в буфере до следующего readyread
 void PropertiesDialog::onDiskDuOutput() {
     if (!m_diskProc) return;
     m_diskOutBuf += m_diskProc->readAllStandardOutput();
@@ -1102,18 +1102,18 @@ bool PropertiesDialog::parseDiskDuRecord(const QByteArray& rec) {
     m_diskResolved.insert(base);
     m_diskChildren.insert(base); // sudo увидел то, что листинг не смог (закрытый корень)
     m_diskRestricted.remove(base); // размер этой папки привилегированная фаза уже снял
-    // прогресс только по детям той же ФС (знаменатель m_diskTotalDirs) и
+    // прогресс только по детям той же фс (знаменатель m_disktotaldirs) и
     // ровно один раз: повторный замер в фазе sudo и дети точки
     // монтирования которых du пропускает счетчик больше не раздувают
     if (firstResolution && m_diskProgressChildren.contains(base)) ++m_diskDoneDirs;
     return true;
 }
 
-// stderr du одиночной/привилегированной фазы. Как только закрытая папка
+// stderr du одиночной/привилегированной фазы. как только закрытая папка
 // впервые замечена (в обычной фазе), сразу идёт подготовка авторизации
-// (noteDiskSudoNeeded): живой тикет молча, полкит системный диалог
+// (notedisksudoneeded): живой тикет молча, полкит системный диалог
 // откроет сам pkexec при измерении; чип инлайн «needed sudo» с полем пароля
-// только если полкит недоступен или отказал. Здесь же ловятся маркеры stderr
+// только если полкит недоступен или отказал. здесь же ловятся маркеры stderr
 // отказа pkexec (диалог отклонён / нет агента), их разберёт финал фазы
 void PropertiesDialog::collectDiskDuErrors() {
     if (!m_diskProc) return;
@@ -1139,7 +1139,7 @@ void PropertiesDialog::collectDiskDuErrors() {
 // первое ограничение доступа: авторизация ровно один раз на скан
 // живой тикет молча через sudo иначе
 // ветка полкита где системный диалог открывается сам в момент измерения
-// отказ диалога разбирает declineSudoAuthorization
+// отказ диалога разбирает declinesudoauthorization
 // а без полкита сразу строка инлайн ввода пароля sudo
 void PropertiesDialog::noteDiskSudoNeeded() {
     if (m_diskSudoReady || m_diskSudoNeeded || m_diskSudoPhase || m_diskSudoDeclined) return;
@@ -1160,7 +1160,7 @@ void PropertiesDialog::noteDiskSudoNeeded() {
 
     if (Core::XdgUtils::polkitAvailable()) {
         // готовность без диалога: батч pkexec сам откроет системный диалог
-        // ровно один раз. m_diskSudoReady=true сразу повторные Permission
+        // ровно один раз. m_disksudoready=true сразу повторные permission
         // denied от продолжающегося du не зовут нотификацию снова
         m_diskSudoReady = true;
         m_diskSudoPkexec = true;
@@ -1220,9 +1220,9 @@ void PropertiesDialog::onDiskDuFinished(bool sudoPhase, int exitCode) {
 
     if (sudoPhase) {
         // фаза полкита без единой записи и с отказом авторизации (код pkexec
-        // 126/127, маркеры stderr «Request dismissed»/«Not authorized») это
+        // 126/127, маркеры stderr «request dismissed»/«not authorized») это
         // ответ пользователя, а не «пустой каталог»: инлайн пароль
-        // повторно не показываем, строки «?» остаются (declineSudoAuthorization);
+        // повторно не показываем, строки «?» остаются (declinesudoauthorization);
         // фолбек инлайн только когда полкит реально недоступен (нет агента или
         // провал запуска); авторизованный пустой каталог даёт exit 0,
         // финализируем как обычно
@@ -1247,7 +1247,7 @@ void PropertiesDialog::onDiskDuFinished(bool sudoPhase, int exitCode) {
         return;
     }
 
-    // обычная фаза закончена. Строки «?» закрытых папок встают в конец
+    // обычная фаза закончена. строки «?» закрытых папок встают в конец
     // таблицы; измеряются они последними и только после пароля sudo (или
     // сразу, если тикет уже жив), повторного полного скана нет
     stopDiskUsageProc();
@@ -1340,8 +1340,8 @@ void PropertiesDialog::fallbackToInlinePassword(const QString& reason) {
     if (m_diskPasswordEdit && isActiveWindow()) m_diskPasswordEdit->setFocus();
 }
 
-// авторизацию в системном диалоге полкита отклонили (126/127, «Request
-// dismissed»/«Not authorized») это окончательный ответ пользователя:
+// авторизацию в системном диалоге полкита отклонили (126/127, «request
+// dismissed»/«not authorized») это окончательный ответ пользователя:
 // второй запрос пароля (строка инлайн) не показываем, недоступные папки
 // остаются со знаком вопроса а вернуться к добору можно вручную через тикет
 // в терминале и открыть свойства заново
@@ -1369,9 +1369,9 @@ void PropertiesDialog::declineSudoAuthorization(const QString& reason) {
     renderDiskUsage();
 }
 
-// «?» = размер не получен: нет записи du или запись неполная (доступ закрыт
-// в последней выполненной фазе); живёт на нескольких стадиях (обычная фаза →
-// ожидание пароля → добор через sudo), поэтому пересчитывается каждым шагом
+// размер не получен если нет записи du или запись неполная (доступ закрыт
+// в последней выполненной фазе); живёт на нескольких стадиях (обычная фаза и
+// ожидание пароля и добор через sudo), поэтому пересчитывается каждым шагом
 void PropertiesDialog::recomputeDiskUnknown() {
     m_diskUnknown.clear();
     for (const QString& c : m_diskChildren) {
@@ -1399,7 +1399,7 @@ void PropertiesDialog::finalizeDiskUsage() {
     renderDiskUsage();
 }
 
-// строка статуса над консолью. Пока ждём пароль, плашка needed sudo встаёт
+// строка статуса над консолью. пока ждём пароль, плашка needed sudo встаёт
 // ровно на место чипа scanning (та же ширина), а полоса прогресса не
 // сбрасывается: замирает на последнем показанном значении; после пароля добор
 // закрытых папок продолжает шкалу с той же точки до 100%;
@@ -1471,8 +1471,8 @@ void PropertiesDialog::updateDiskStatusRow() {
                                      && (declined || needPw));
 }
 
-// троттлинг перерисовки: du сыплет сотни записей, HTML пересобираем
-// не чаще, чем раз в kDiskRenderThrottleMs (финал рисуется сразу)
+// троттлинг перерисовки: du сыплет сотни записей, html пересобираем
+// не чаще, чем раз в kdiskrenderthrottlems (финал рисуется сразу)
 void PropertiesDialog::scheduleDiskRender() {
     if (m_diskRenderScheduled) return;
     const qint64 elapsed = m_diskLastRender.isValid() ? m_diskLastRender.elapsed() : 1000;
@@ -1525,7 +1525,7 @@ void PropertiesDialog::renderDiskUsage() {
         if (m_diskUnknown.contains(c)) unknownList << c;
         else if (m_diskResolved.contains(c)) known << c;
         // ребёнок без записи du во время скана не показывается: «?» появляется
-        // только в финале (недоступные/неизмеренные), без мусорных «0 B»
+        // только в финале (недоступные/неизмеренные), без мусорных «0 b»
     }
     std::sort(known.begin(), known.end(), [this](const QString& a, const QString& b) {
         const qint64 sa = m_diskSizes.value(a, 0);
@@ -1596,7 +1596,7 @@ void PropertiesDialog::applyPermissions() {
             TuiConfirmPopup::alert(this, "Notice", "Cannot change permissions of symbolic links.");
             return;
         }
-        // сохраняем S_ISUID, S_ISGID, S_ISVTX
+        // сохраняем s_isuid, s_isgid, s_isvtx
         mode_t preservedBits = st.st_mode & (S_ISUID | S_ISGID | S_ISVTX);
         mode |= preservedBits;
     }

@@ -41,19 +41,19 @@ public:
 
     void applySystemTheme();
 
-    // оверлей свойств: «как внешнее окно», но часть этого же окна, панель с
-    // рамкой Accent поверх остальных элементов. Без затемнений и анимаций
-    // (гайдлайн §3), Esc/Close скрывают. Компактные свойства (ПКМ→Properties,
-    // Alt+Enter, закладки) показывают только вес папки; для корня диска/ФС
-    // в том же оверлее автоматически раскрывается консоль Disk Usage
+    // оверлей свойств: как внешнее окно, но часть этого же окна, панель с
+    // рамкой accent поверх остальных элементов. без затемнений и анимаций
+    // (гайдлайн §3), esc/close скрывают. компактные свойства (пкм и properties,
+    // alt+enter, закладки) показывают только вес папки; для корня диска/фс
+    // в том же оверлее автоматически раскрывается консоль disk usage
     void showPropertiesOverlay(const std::filesystem::path& path);
 
-    // Open With: полноразмерный оверлей диалога (поиск, Default/Other apps,
-    // «Always use for this file type») вместо подменю
+    // open with: полноразмерный оверлей диалога (поиск, default/other apps,
+    // «always use for this file type») вместо подменю
     void showOpenWithOverlay(const std::filesystem::path& path);
 
-    // Extract In…: тот же оверлей FileChooserDialog, но в режиме каталогов
-    // и с кнопкой Extract, выбор папки назначения для распаковки архива
+    // extract in: тот же оверлей filechooserdialog, но в режиме каталогов
+    // и с кнопкой extract, выбор папки назначения для распаковки архива
     void showExtractChooserOverlay();
     void showExtractChooserOverlayFor(const std::filesystem::path& archivePath);
 
@@ -101,9 +101,9 @@ private:
     void refreshFilterCommands();
     void runFilterPluginCommand(const FilterPluginCommand& command, const QString& query);
     void setupShortcuts();
-    // пересоздание QShortcut'ов по Core::Keybinds (живое применение после
-    // переназначения клавиш в Cheat Sheet); setupShortcuts зовёт её один раз
-    // и вешает focusChanged, при reloadKeybinds() пересоздание на месте
+    // пересоздание qshortcut'ов по core::keybinds (живое применение после
+    // переназначения клавиш в cheat sheet); setupshortcuts зовёт её один раз
+    // и вешает focuschanged, при reloadkeybinds() пересоздание на месте
     void createKeybindShortcuts();
     void reloadKeybinds();
     void updateShortcutAvailability(QWidget* focus);
@@ -123,7 +123,7 @@ private:
     void showConnectionOverlay(const QString& location);
     void connectNetwork(const Core::Network::Location& location);
     // массовое переименование: встроенная панель поверх колонок в этой же
-    // рамке Accent, без отдельного окна и без затемнения
+    // рамке accent, без отдельного окна и без затемнения
     void setupBulkRenameOverlay();
     void positionBulkRenameOverlay();
     void showBulkRenameOverlay(const std::vector<std::filesystem::path>& paths);
@@ -147,28 +147,28 @@ private:
     QWidget* m_propsOverlay{nullptr};      // оверлей панели с рамкой
     PropertiesDialog* m_propsPage{nullptr}; // свойства; корень диска с консолью
 
-    QWidget* m_openWithOverlay{nullptr};   // панель Open With (та же геометрия)
+    QWidget* m_openWithOverlay{nullptr};   // панель open with (та же геометрия)
     OpenWithDialog* m_openWithPage{nullptr};
 
     // выбор файла в стиле tui вместо системного qfiledialog сайдбар мест и список файлов с иконками для extract in и выбора ssh ключа
     QWidget* m_fileChooserOverlay{nullptr};
     FileChooserDialog* m_fileChooserPage{nullptr};
-    // назначение оверлея: true выбор каталога для Extract In…
+    // назначение оверлея: true выбор каталога для extract in…
     bool m_fileChooserForExtract{false};
     bool m_fileChooserForSshKey{false};
-    // архив для Extract In… из папки превью (выделение колонок при этом пустое)
+    // архив для extract in… из папки превью (выделение колонок при этом пустое)
     std::filesystem::path m_extractArchiveOverride;
 
-    // Cheat Sheet (F1/?) оверлей поверх интерфейса «как Disk Usage»:
+    // cheat sheet (f1/?) оверлей поверх интерфейса «как disk usage»:
     // внутри можно переназначить клавиши (пишет keybinds.conf и применяет
-    // бинды на лету через reloadKeybinds)
+    // бинды на лету через reloadkeybinds)
     QWidget* m_helpOverlay{nullptr};
     HelpDialog* m_helpPage{nullptr};
 
     QWidget* m_bulkRenameOverlay{nullptr};
     BulkRenamePanel* m_bulkRenamePage{nullptr};
 
-    // фоновые задачи (TaskManager): список с прогрессом, отменой и логом
+    // фоновые задачи (taskmanager): список с прогрессом, отменой и логом
     TasksOverlay* m_tasksOverlay{nullptr};
     ConnectionDialog* m_connectionDialog{nullptr};
     Core::Network::NetworkMount* m_networkMount{nullptr};
@@ -177,8 +177,8 @@ private:
     QString m_pendingSearchToken;
     QString m_pendingSearchQuery;
     bool m_keepGlobalResultsOnDismiss{false};
-    // все QShortcut'ы, созданные createKeybindShortcuts (для пересоздания и
-    // временного отключения на время захвата клавиш в Cheat Sheet)
+    // все qshortcut'ы, созданные createkeybindshortcuts (для пересоздания и
+    // временного отключения на время захвата клавиш в cheat sheet)
     QList<QShortcut*> m_keybindShortcuts;
 
     bool m_bookmarksAutoHidden{false};
@@ -189,7 +189,7 @@ private:
     int m_lastTabIndex{0};
     std::vector<std::filesystem::path> m_closedTabsHistory;
     // шорткаты, которые обязаны уступать ввод в текстовые поля этого же окна
-    // (filter/path/prompt статусбара, оверлеи) см. updateShortcutAvailability
+    // (filter/path/prompt статусбара, оверлеи) см. updateshortcutavailability
     QList<QShortcut*> m_textSensitiveShortcuts;
     // глобальные переходы к path/filter: внутри текстового поля они полезны,
     // но при открытом оверлее или prompt не должны срабатывать поверх него

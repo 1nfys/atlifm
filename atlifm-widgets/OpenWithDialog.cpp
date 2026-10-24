@@ -15,7 +15,7 @@ namespace Widgets {
 
 namespace {
 
-// заголовок секции как в PropertiesDialog: только название, без рамок и линеек
+// заголовок секции как в propertiesdialog: только название, без рамок и линеек
 QLabel* makeSectionHeader(const QString& title, QWidget* parent) {
     auto* lbl = new QLabel(parent);
     lbl->setTextFormat(Qt::RichText);
@@ -136,7 +136,7 @@ void OpenWithDialog::updateTheme() {
         )").arg(InputFg().name(), SelectionBg().name(), SelectionFg().name()));
     }
     if (m_openBtn) {
-        // метрики идентичны Cancel (border 1px + padding 3px 14px), иначе кнопки разной высоты
+        // метрики идентичны cancel (border 1px + padding 3px 14px), иначе кнопки разной высоты
         m_openBtn->setStyleSheet(QString(R"(
             QPushButton {
                 background-color: %1;
@@ -161,7 +161,7 @@ void OpenWithDialog::updateTheme() {
         )").arg(Surface0().name(), Text().name(), Surface1().name()));
     }
     if (m_alwaysUse) {
-        // чекбокс в стиле TUI: нативный индикатор скрыт, текст несёт [ ]/[x]
+        // чекбокс в стиле tui: нативный индикатор скрыт, текст несёт [ ]/[x]
         m_alwaysUse->setStyleSheet(QString(R"(
             QCheckBox { color: %1; }
             QCheckBox::indicator { width: 0px; height: 0px; border: none; background: transparent; }
@@ -275,7 +275,7 @@ void OpenWithDialog::addRow(const Core::DesktopApp& app, bool isDefault) {
     if (!ic.isNull()) {
         iconLabel->setPixmap(ic.pixmap(16, 16));
     } else {
-        // без темы иконок (QT_QPA_PLATFORMTHEME выключен) fromTheme всегда пустой:
+        // без темы иконок (qt_qpa_platformtheme выключен) fromtheme всегда пустой:
         // рисуем глиф nerd font чтобы строки не оставались без иконки
         iconLabel->setText(Icons::Glyph::Executable);
         iconLabel->setAlignment(Qt::AlignCenter);

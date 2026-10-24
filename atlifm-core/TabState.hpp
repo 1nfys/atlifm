@@ -21,7 +21,7 @@ struct TabState {
     int currentRow{0};
     bool isPinned{false};
     bool isSudo{false};
-    std::filesystem::path sudoRoot; // каталог, открытый через Sudo Open (индикатор sudo)
+    std::filesystem::path sudoRoot; // каталог, открытый через sudo open (индикатор sudo)
     QString filterQuery;
 
     void navigateTo(const std::filesystem::path& newPath) {

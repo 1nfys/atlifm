@@ -27,7 +27,7 @@ QString keyDisplayOf(const QStringList& keys) {
     return pretty.join(QStringLiteral(" / "));
 }
 
-// секция → статические заметки, жесты и режимы списка без QShortcut
+// секция и статические заметки, жесты и режимы списка без qshortcut
 const QHash<QString, QStringList>& sectionExtras() {
     static const QHash<QString, QStringList> extras = {
         {"SEARCH & FILTER", {
@@ -81,7 +81,7 @@ const QStringList& mouseRows() {
 HelpDialog::HelpDialog(QWidget* parent)
     : QWidget(parent) {
     setFont(Theme::getMonospaceFont(9));
-    // захват клавиш через keyPressEvent, фокус обязателен
+    // захват клавиш через keypressevent, фокус обязателен
     setFocusPolicy(Qt::StrongFocus);
 
     auto* layout = new QVBoxLayout(this);
@@ -172,7 +172,7 @@ void HelpDialog::rebuild() {
     if (!m_scroll) return;
 
     if (m_content) {
-        // takeWidget отвязывает старый контент, удаление отложенное:
+        // takewidget отвязывает старый контент, удаление отложенное:
         // rebuild может вызываться из слота кнопки этого же контента
         QWidget* old = m_scroll->takeWidget();
         if (old) old->deleteLater();
@@ -443,7 +443,7 @@ void HelpDialog::keyPressEvent(QKeyEvent* event) {
     const QString id = m_captureAction;
     const QString conflict = conflictForAction(id, portable);
     if (!conflict.isEmpty()) {
-        // не сохраняем неоднозначный бинд: Qt отключит оба QShortcut,
+        // не сохраняем неоднозначный бинд: qt отключит оба qshortcut,
         // и пользователь потеряет и старое действие, и новое
         if (m_status) {
             m_status->setText(

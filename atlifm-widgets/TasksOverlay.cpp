@@ -160,7 +160,7 @@ void TasksOverlay::refresh() {
     }
     ensureSelectionVisible();
 
-    // лог обновляется по строке через logAppended чтобы полный пересбор текста не сбрасывал скролл при каждом тике прогресса
+    // лог обновляется по строке через logappended чтобы полный пересбор текста не сбрасывал скролл при каждом тике прогресса
     update();
 }
 
@@ -586,4 +586,4 @@ void TasksOverlay::updateLogView() {
     if (auto* bar = m_logView->verticalScrollBar()) bar->setValue(bar->maximum());
 }
 
-} // namespace Widgets
+} // namespace widgets

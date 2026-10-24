@@ -1,11 +1,11 @@
-/* atlifm plugin api providing C ABI version 1 for native plugins
+/* atlifm plugin api providing c abi version 1 for native plugins
  *
  * plugins are shared objects inside user config plugins directory exporting atlifm_plugin_init
- * the host loads them via dlopen and supplies the AtlifmHostApi structure
+ * the host loads them via dlopen and supplies the atlifmhostapi structure
  * registrations occur strictly during initialization after which the table is sealed
  *
  * threading model:
- * run and override and hook execute in the GUI thread
+ * run and override and hook execute in the gui thread
  * preview render runs in a worker thread pool where only write and custom logic are permitted
  * identifiers with sudo are protected and bypass plugin dispatch entirely */
 #ifndef ATLIFM_PLUGIN_API_H
@@ -23,7 +23,7 @@ extern "C" {
 typedef struct AtlifmHostApi AtlifmHostApi;
 
 /* invocation context containing event name and action id and cwd and selected paths
- * all strings are UTF8 and remain valid only during this call */
+ * all strings are utf8 and remain valid only during this call */
 typedef struct AtlifmInvocation {
     uint32_t struct_size;
     const char* event;
@@ -76,7 +76,7 @@ struct AtlifmHostApi {
     uint32_t struct_size;
 
     const char* (*host_version)(void);
-    /* writes text to action output overlay, or to the center pane of a Ctrl+F command output */
+    /* writes text to action output overlay, or to the center pane of a ctrl+f command output */
     void (*output_write)(const char* text);
     /* displays short message inside status bar */
     void (*notify)(const char* message);
@@ -91,7 +91,7 @@ struct AtlifmHostApi {
     int (*register_hook)(const char* event, AtlifmHookFn fn, void* user);
     void (*log)(const char* level, const char* message);
     /* writes text to one pane of the three-pane command output: 0 parent, 1 center, 2 preview
-     * the first call opens the pane view; UTF-8 text is appended as is */
+     * the first call opens the pane view; utf-8 text is appended as is */
     void (*output_write_pane)(int pane, const char* text);
 };
 

@@ -3,6 +3,7 @@
 #include "NativePlugins.hpp"
 #include "TuiPanesOverlay.hpp"
 #include "ArchiveTreeWidget.hpp"
+#include "StatusBar.hpp"
 #include "../atlifm-models/ArchiveModel.hpp"
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -64,7 +65,7 @@ inline bool isInsideDir(const std::filesystem::path& p, const std::filesystem::p
 }
 
 // имя из встроенного приглашения (rename / new folder / new file): пустое, с '/',
-// с NUL или "."/".." недопустимо; иначе ввод («../evil», «a/b») создал бы элемент
+// с nul или "."/".." недопустимо; иначе ввод («../evil», «a/b») создал бы элемент
 // вне текущего каталога или превратил rename в произвольный перенос
 QString validateItemName(const QString& name) {
     if (name.isEmpty()) return QStringLiteral("Name cannot be empty");
@@ -77,13 +78,13 @@ QString validateItemName(const QString& name) {
 
 }
 
-// MillerListView
+// millerlistview
 
 MillerListView::MillerListView(bool isParentPane, QWidget* parent)
     : QListView(parent), m_isParentPane(isParentPane) {
     setAcceptDrops(true);
-    // отключаем внутренний драг QAbstractItemView: конфликтует с нашим QDrag
-    // (DragDropHandler::createDrag) и выделяет строки протяжкой
+    // отключаем внутренний драг qabstractitemview: конфликтует с нашим qdrag
+    // (dragdrophandler::createdrag) и выделяет строки протяжкой
     setDragEnabled(false);
     setDropIndicatorShown(false);
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
@@ -188,9 +189,9 @@ void MillerListView::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // Shift+стрелки/Home/End/PageUp/PageDown: детерминированный диапазон от anchor;
-    // NoUpdate потому что setCurrentIndex вызывает selectionCommand и сбрасывает выбор
-    // и сбрасывает весь диапазон Shift
+    // shift+стрелки/home/end/pageup/pagedown: детерминированный диапазон от anchor;
+    // noupdate потому что setcurrentindex вызывает selectioncommand и сбрасывает выбор
+    // и сбрасывает весь диапазон shift
     {
         int k = event->key();
         bool isNav = (k == Qt::Key_Up || k == Qt::Key_Down ||
@@ -287,8 +288,8 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::LeftButton) {
         // зоны gutter запускают rubberband даже на элементах: в маленьких окнах список
-        // занимает весь viewport и пустого места нет; левые 16px совпадают с leftGutter
-        // в FileItemDelegate, правые 18px зона захвата
+        // занимает весь viewport и пустого места нет; левые 16px совпадают с leftgutter
+        // в fileitemdelegate, правые 18px зона захвата
         bool inLeftGutter = (event->pos().x() < 16);
         bool inRightGutter = (event->pos().x() >= viewport()->width() - 18);
         QModelIndex idx = (inLeftGutter || inRightGutter) ? QModelIndex() : indexAt(event->pos());
@@ -316,9 +317,9 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // Shift+Click: детерминированный выбор от anchor; press и release обрабатываем сами
-        // (m_skipBaseRelease), т.к. Qt не видит этот press и его internal anchor затёр бы диапазон;
-        // NoUpdate, чтобы setCurrentIndex не вызвал ClearAndSelect и не стёр диапазон
+        // shift+click: детерминированный выбор от anchor; press и release обрабатываем сами
+        // (m_skipbaserelease), т.к. qt не видит этот press и его internal anchor затёр бы диапазон;
+        // noupdate, чтобы setcurrentindex не вызвал clearandselect и не стёр диапазон
         if (event->modifiers() & Qt::ShiftModifier) {
             int clickedRow = idx.row();
             int anchorRow = resolveAnchorRow();
@@ -360,7 +361,7 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
 
         const bool ctrlHeld = (event->modifiers() & Qt::ControlModifier);
 
-        // Ctrl+Click переключает только эту строку; Ctrl+drag продолжает расширять от неё через Qt
+        // ctrl+click переключает только эту строку; ctrl+drag продолжает расширять от неё через qt
         if (ctrlHeld) {
             QString p = idx.data(Models::FileSystemModel::PathRole).toString();
             updateAnchor(idx.row(), toFs(p));
@@ -368,8 +369,8 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // клик или нажатие на элемент готовит возможный DragOut (DnD), рамка только
-        // для пустого места или gutter. Если элемент не выделен, выделяем и ставим
+        // клик или нажатие на элемент готовит возможный dragout (dnd), рамка только
+        // для пустого места или gutter. если элемент не выделен, выделяем и ставим
         // фокус; если в мультивыделении, сохраняем его для драга, а простое нажатие
         // без драга сворачивает выделение до одного элемента при отпускании
         if (!m_isParentPane) {
@@ -395,8 +396,8 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // родительская панель сохраняет стандартный press Qt (вытаскивание одного соседа);
-        // Ctrl там обычный переключатель, поэтому драг не начинается
+        // родительская панель сохраняет стандартный press qt (вытаскивание одного соседа);
+        // ctrl там обычный переключатель, поэтому драг не начинается
         m_dragMode = ctrlHeld ? DragMode::None : DragMode::DragOut;
         m_selectionAnchorRow = idx.row();
         QListView::mousePressEvent(event);
@@ -472,7 +473,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
             }
             m_preservingAnchor = false;
             scrollTo(hovered, QAbstractItemView::EnsureVisible);
-            // release обрабатываем сами, иначе Qt применит свой устаревший диапазон от anchor
+            // release обрабатываем сами, иначе qt применит свой устаревший диапазон от anchor
             m_skipBaseRelease = true;
         }
         event->accept();
@@ -495,7 +496,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
             verticalScrollBar()->triggerAction(QAbstractSlider::SliderSingleStepAdd);
         }
 
-        // пересечение рамки с visualRect элементов в реальном времени
+        // пересечение рамки с visualrect элементов в реальном времени
         // (работает и для архивного листинга с виртуальными путями)
         if (model()) {
             QItemSelection selection;
@@ -507,7 +508,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
                     selection.select(itemIdx, itemIdx);
                 }
             }
-            // Ctrl или Shift расширяет, обычный драг заменяет
+            // ctrl или shift расширяет, обычный драг заменяет
             if (event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) {
                 selectionModel()->select(selection, QItemSelectionModel::Select);
             } else {
@@ -518,8 +519,8 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    // QDrag при прохождении порога от press с DragOut; press по невыделенному элементу
-    // обрабатывает ветка рамки выше; драг с Shift расширяет выделение и никогда не стартует DnD
+    // qdrag при прохождении порога от press с dragout; press по невыделенному элементу
+    // обрабатывает ветка рамки выше; драг с shift расширяет выделение и никогда не стартует dnd
     if (m_dragMode == DragMode::DragOut && (event->buttons() & Qt::LeftButton)
         && !(event->modifiers() & Qt::ShiftModifier)) {
         int distance = (event->pos() - m_dragStartPos).manhattanLength();
@@ -533,7 +534,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
                 return;
             }
         }
-        // не передаём драг элемента левой кнопкой в QListView::mouseMoveEvent (иначе случайное выделение протяжкой)
+        // не передаём драг элемента левой кнопкой в qlistview::mousemoveevent (иначе случайное выделение протяжкой)
         event->accept();
         return;
     }
@@ -588,7 +589,7 @@ void MillerListView::mouseReleaseEvent(QMouseEvent* event) {
             m_rubberBand->hide();
         }
         // курсор/anchor = ряд, с которого начался жест, а не последний выделенный;
-        // NoUpdate, т.к. setCurrentIndex() вызывает ClearAndSelect и затирал рамку
+        // noupdate, т.к. setcurrentindex() вызывает clearandselect и затирал рамку
         int dist = (event->pos() - m_rubberBandOrigin).manhattanLength();
         if (dist >= QApplication::startDragDistance()) {
             int anchorRow = -1;
@@ -620,8 +621,8 @@ void MillerListView::mouseReleaseEvent(QMouseEvent* event) {
     }
     m_clearOthersOnRelease = false;
     m_dragMode = DragMode::None;
-    // Press поглощён нами (Shift+Click / сохранение мультивыбора): Qt его не видел,
-    // поэтому base release пропускаем, иначе Qt затрёт выделение
+    // press поглощён нами (shift+click / сохранение мультивыбора): qt его не видел,
+    // поэтому base release пропускаем, иначе qt затрёт выделение
     if (m_skipBaseRelease && event->button() == Qt::LeftButton) {
         m_skipBaseRelease = false;
         m_dragStartIndex = QPersistentModelIndex();
@@ -692,7 +693,7 @@ void MillerListView::dropEvent(QDropEvent* event) {
         return;
     }
 
-    // входящий drop сырого изображения, data: URI или удалённого URL из внешнего браузера / AI чата
+    // входящий drop сырого изображения, data: uri или удалённого url из внешнего браузера / ai чата
     if (Dnd::DragDropHandler::handleMimeDrop(event->mimeData(), targetDir,
                                                  event->proposedAction(), event->modifiers(),
                                                  parentWidget())) {
@@ -703,10 +704,10 @@ void MillerListView::dropEvent(QDropEvent* event) {
     event->ignore();
 }
 
-// MillerViewContainer
+// millerviewcontainer
 
-// кнопка сортировки 20×20: глиф центрируется по чернилам (tightBoundingRect),
-// т.к. у Nerd ink глифов смещение от центра ячейки и обычный QPushButton
+// кнопка сортировки 20×20: глиф центрируется по чернилам (tightboundingrect),
+// т.к. у nerd ink глифов смещение от центра ячейки и обычный qpushbutton
 // показывал иконку не по центру
 class SortGlyphButton : public QPushButton {
 public:
@@ -730,7 +731,7 @@ protected:
         const QFontMetricsF fm(font());
         const QRectF ink = fm.tightBoundingRect(glyph);
         p.setPen(underMouse() ? Theme::Colors::Accent() : Theme::Colors::Subtext());
-        // точный центр через QRectF: QRect::center() на чётной стороне округляет
+        // точный центр через qrectf: qrect::center() на чётной стороне округляет
         // вниз и глиф уезжает влево/вверх
         const QPointF cellCenter = QRectF(rect()).center();
         p.drawText(QPointF(cellCenter.x() - ink.center().x(),
@@ -744,7 +745,7 @@ MillerViewContainer::MillerViewContainer(QWidget* parent)
 }
 
 MillerViewContainer::~MillerViewContainer() {
-    // плагин может ещё работать (дочерний QProcess): его уничтожение убьёт процесс,
+    // плагин может ещё работать (дочерний qprocess): его уничтожение убьёт процесс,
     // а finished синхронно вызвал бы refresh по разрушаемому дереву виджетов;
     // отключаем хендлеры заранее
     for (QProcess* proc : findChildren<QProcess*>(QString(), Qt::FindDirectChildrenOnly))
@@ -787,7 +788,7 @@ void MillerViewContainer::setupUi() {
     m_centerView->setItemDelegate(m_centerDelegate);
 
     // центральная колонка: список файлов или содержимое архива, без растягивания
-    // на всю область Miller и без затрагивания соседних колонок
+    // на всю область miller и без затрагивания соседних колонок
     m_centerStack = new QStackedWidget(this);
     m_centerStack->setMinimumWidth(160);
     m_centerStack->addWidget(m_centerView);
@@ -837,8 +838,8 @@ void MillerViewContainer::setupUi() {
     m_splitter->setStretchFactor(1, 3);
     m_splitter->setStretchFactor(2, 1);
     m_splitter->setSizes({300, 480, 420});
-    // После восстановления layout колонки держим ровно сохранённой ширины,
-    // пока пользователь сам не потянет рукоятку. Иначе первый resize от WM
+    // после восстановления layout колонки держим ровно сохранённой ширины,
+    // пока пользователь сам не потянет рукоятку. иначе первый resize от wm
     // мог применить ширины к промежуточному размеру окна а следующий
     // пропорционально растянуть их и снова получить «не ту» раскладку.
     connect(m_splitter, &QSplitter::splitterMoved, this, [this]() {
@@ -846,12 +847,12 @@ void MillerViewContainer::setupUi() {
         m_initialSizesApplied = true;
     });
 
-    // кнопка с иконкой сортировки в углу центральной колонки (глиф центрируется по чернилам в SortGlyphButton)
+    // кнопка с иконкой сортировки в углу центральной колонки (глиф центрируется по чернилам в sortglyphbutton)
     m_sortButton = new SortGlyphButton(m_centerView);
     m_sortButton->move(0, 0);
     m_sortButton->setToolTip("Sort by (right-click: reset)");
     connect(m_sortButton, &QPushButton::clicked, this, &MillerViewContainer::showSortMenu);
-    // ПКМ по иконке сортировки: сброс папки к дефолту (Name ascending)
+    // пкм по иконке сортировки: сброс папки к дефолту (name ascending)
     m_sortButton->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_sortButton, &QPushButton::customContextMenuRequested, this,
             [this](const QPoint&) { resetSortToDefault(); });
@@ -867,27 +868,12 @@ void MillerViewContainer::setupUi() {
     m_viewStack->addWidget(m_pluginPanes);
     m_viewStack->setCurrentWidget(m_splitter);
 
-    // Страница архива живёт только в центральной колонке: левая и правая
+    // страница архива живёт только в центральной колонке: левая и правая
     // колонки остаются на месте, путь вкладки при этом не меняется.
     m_archivePage = new QWidget(m_centerStack);
     auto* archiveLayout = new QVBoxLayout(m_archivePage);
     archiveLayout->setContentsMargins(0, 0, 0, 0);
     archiveLayout->setSpacing(0);
-
-    auto* archiveHeader = new QWidget(m_archivePage);
-    auto* archiveHeaderLayout = new QHBoxLayout(archiveHeader);
-    archiveHeaderLayout->setContentsMargins(6, 4, 8, 4);
-    archiveHeaderLayout->setSpacing(8);
-
-    m_archiveBackBtn = new QPushButton(QStringLiteral("\u2190 Back"), archiveHeader);
-    m_archiveBackBtn->setAutoDefault(false);
-    m_archiveBackBtn->setFixedHeight(24);
-    m_archiveBackBtn->setCursor(Qt::PointingHandCursor);
-    connect(m_archiveBackBtn, &QPushButton::clicked, this, &MillerViewContainer::leaveArchive);
-    archiveHeaderLayout->addWidget(m_archiveBackBtn, 0, Qt::AlignVCenter);
-
-    archiveHeaderLayout->addStretch(1);
-    archiveLayout->addWidget(archiveHeader);
 
     m_archiveModel = new Models::ArchiveModel(this);
     m_archiveTree = new ArchiveTreeWidget(m_archivePage);
@@ -912,6 +898,8 @@ void MillerViewContainer::setupUi() {
     connect(m_archiveModel, &Models::ArchiveModel::loadFailed, this, [this](const QString& error) {
         if (m_archiveTree && !m_archivePath.empty()) m_archiveTree->showMessage(error);
     });
+    connect(m_archiveTree, &ArchiveTreeWidget::leaveArchiveRequested,
+            this, &MillerViewContainer::leaveArchive);
     connect(m_archiveTree, &ArchiveTreeWidget::messageRequested,
             this, &MillerViewContainer::messageEmitted);
     connect(m_archiveTree, &ArchiveTreeWidget::entrySelected,
@@ -925,8 +913,8 @@ void MillerViewContainer::setupUi() {
         updateCenterSelection();
     });
 
-    // Qt синхронно очищает выделение вида внутри begin/endResetModel (фоновые
-    // пересканирования, ввод фильтра); ложный selectionChanged затёр бы m_selectedPaths
+    // qt синхронно очищает выделение вида внутри begin/endresetmodel (фоновые
+    // пересканирования, ввод фильтра); ложный selectionchanged затёр бы m_selectedpaths
     // и свернул фокус до одного файла, поэтому блокируем его и восстанавливаем
     connect(m_centerModel, &QAbstractItemModel::modelAboutToBeReset, this, [this]() {
         if (m_centerView->currentIndex().isValid()) {
@@ -938,8 +926,8 @@ void MillerViewContainer::setupUi() {
     });
     connect(m_centerModel, &QAbstractItemModel::modelReset, this, [this]() {
         if (auto* sm = m_centerView->selectionModel()) sm->blockSignals(false);
-        // IsSelected сохранились на стороне модели через m_selectedPaths, применяем
-        // их повторно к selectionModel, который Qt только что очистил
+        // isselected сохранились на стороне модели через m_selectedpaths, применяем
+        // их повторно к selectionmodel, который qt только что очистил
         auto selPaths = m_centerModel->selectedPaths();
         auto* sm = m_centerView->selectionModel();
         if (sm) {
@@ -988,9 +976,9 @@ void MillerViewContainer::setupUi() {
         if (m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path()) {
             const auto exitedDir = m_currentDir;
             const auto parentDir = exitedDir.parent_path();
-            // Сначала переключаем каталог, потому что setDirectory() сбрасывает
-            // отложенный выбор. Потом просим выделить папку, из которой поднялись,
-            // чтобы Right вернул обратно.
+            // сначала переключаем каталог, потому что setdirectory() сбрасывает
+            // отложенный выбор. потом просим выделить папку, из которой поднялись,
+            // чтобы right вернул обратно.
             setDirectory(parentDir);
             selectPathAfterRefresh(exitedDir);
         }
@@ -1017,8 +1005,8 @@ void MillerViewContainer::setupUi() {
 
     connect(m_centerView, &MillerListView::toggleSelectionRequested, this, [this](int row) {
         m_centerModel->toggleSelection(row);
-        // держим selectionModel Qt в синхроне с явным мультивыбором по Space,
-        // чтобы Shift+Click/Shift+стрелки расширяли его, а не стирали
+        // держим selectionmodel qt в синхроне с явным мультивыбором по space,
+        // чтобы shift+click/shift+стрелки расширяли его, а не стирали
         QModelIndex toggledIdx = m_centerModel->index(row, 0);
         if (toggledIdx.isValid() && m_centerView->selectionModel()) {
             bool nowSelected = m_centerModel->data(toggledIdx, Models::FileSystemModel::IsSelectedRole).toBool();
@@ -1040,9 +1028,9 @@ void MillerViewContainer::setupUi() {
     // свойства из превью тем же внутренним окном в центре (не в превью)
     connect(m_previewPane, &PreviewPane::propertiesRequested, this, &MillerViewContainer::showPropertiesFor);
     connect(m_previewPane, &PreviewPane::openWithDialogRequested, this, &MillerViewContainer::openWithDialogRequested);
-    // Extract In… из меню превью: каталог выбирает MainWindow тем же оверлеем, что и для колонок
+    // extract in… из меню превью: каталог выбирает mainwindow тем же оверлеем, что и для колонок
     connect(m_previewPane, &PreviewPane::extractInRequested, this, &MillerViewContainer::extractInPathRequested);
-    // Plugins из меню превью: общий путь исполнения с колонками
+    // plugins из меню превью: общий путь исполнения с колонками
     connect(m_previewPane, &PreviewPane::pluginRunRequested, this,
             [this](const QString& id, const std::filesystem::path& target, const std::filesystem::path& cwd) {
         runPluginByIdIn(id, {target}, cwd.empty() ? target.parent_path() : cwd,
@@ -1060,7 +1048,7 @@ void MillerViewContainer::setupUi() {
     // двойной клик по центральной панели
     connect(m_centerView, &QListView::doubleClicked, this, &MillerViewContainer::onCenterDoubleClicked);
 
-    // подключения DnD
+    // подключения dnd
     connect(m_centerView, &MillerListView::filesDropped, this, &MillerViewContainer::onFilesDropped);
     connect(m_parentView, &MillerListView::filesDropped, this, &MillerViewContainer::onFilesDropped);
 
@@ -1104,8 +1092,8 @@ void MillerViewContainer::setupUi() {
         connect(menu, &TuiContextMenu::extractHereRequested, this, &MillerViewContainer::extractHere);
         connect(menu, &TuiContextMenu::extractInRequested, this, [this, sel]() {
             if (tryPluginOverrideWith("extract_in", sel, m_currentDir)) return;
-            // меню в hideEvent возвращает фокус колонкам; открываем оверлей следующим
-            // циклом, иначе он сразу теряет фокус и Esc не доходит до диалога
+            // меню в hideevent возвращает фокус колонкам; открываем оверлей следующим
+            // циклом, иначе он сразу теряет фокус и esc не доходит до диалога
             QTimer::singleShot(0, this, [this]() { emit extractInRequested(); });
         });
         connect(menu, &TuiContextMenu::openTerminalRequested, this, &MillerViewContainer::openTerminal);
@@ -1235,7 +1223,7 @@ void MillerViewContainer::setupUi() {
                 m_pendingSelectRetries = 0;
             } else if (m_pendingSelectRetries > 0) {
                 // путь ещё не появился (переименование, фильтр): повторяем ограниченное
-                // число раз, refresh снова придёт в loadingFinished
+                // число раз, refresh снова придёт в loadingfinished
                 --m_pendingSelectRetries;
                 m_centerModel->refresh();
             } else {
@@ -1245,11 +1233,11 @@ void MillerViewContainer::setupUi() {
         }
 
         if (count > 0) {
-            // сохраняем фокус при фоновых обновлениях: восстанавливаем выделение Qt
+            // сохраняем фокус при фоновых обновлениях: восстанавливаем выделение qt
             // для явно выбранных строк, иначе держим текущую строку вместо прыжка на строку 0
             auto selPaths = m_centerModel->selectedPaths();
             if (selPaths.size() > 1 && m_centerView->selectionModel()) {
-                // повторно применяем визуальное выделение Qt для мультивыбора, стёртого resetModel
+                // повторно применяем визуальное выделение qt для мультивыбора, стёртого resetmodel
                 QItemSelection qs;
                 int firstValidRow = -1;
                 for (const auto& sp : selPaths) {
@@ -1267,7 +1255,7 @@ void MillerViewContainer::setupUi() {
                     m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
                 }
             } else if (!m_centerView->currentIndex().isValid()) {
-                // Current сброшен при reset модели: восстанавливаем прежнюю строку
+                // current сброшен при reset модели: восстанавливаем прежнюю строку
                 // с ограничением по новому количеству
                 int restoreRow = std::clamp(m_lastKnownRow, 0, count - 1);
                 QModelIndex restoreIdx = m_centerModel->index(restoreRow, 0);
@@ -1290,7 +1278,7 @@ void MillerViewContainer::syncParentViewToCurrentDir() {
     if (!m_parentModel || !m_parentView || !m_parentDelegate) return;
     m_parentDelegate->setHighlightedPath(m_currentDir);
     if (auto* sm = m_parentView->selectionModel()) {
-        // setCurrentIndex() делает ClearAndSelect|Rows и зажигает яркое выделение; при смене
+        // setcurrentindex() делает clearandselect|rows и зажигает яркое выделение; при смене
         // папки с тем же родителем модель не перезагружается, и выделение застревало бы,
         // поэтому двигаем current index точечно
         sm->clearSelection();
@@ -1348,10 +1336,10 @@ void MillerViewContainer::restoreMultiSelection(const std::unordered_set<std::st
 }
 
 namespace {
-// сортировка для каждой папки: каталог → «режим|порядок» (0=Name, 1=Size, 2=Date,
-// 3=Type; 1=по возрастанию, 0=по убыванию). Плоский ~/.config/atlifm/sorting.ini
-// (QSettings, ключ = канонический путь в процентном кодировании: слэши в ключах
-// QSettings разделители групп, а путь начинается со слэша). При ATLIFM_CONFIG_DIR
+// сортировка для каждой папки: каталог и «режим|порядок» (0=name, 1=size, 2=date,
+// 3=type; 1=по возрастанию, 0=по убыванию). плоский ~/.config/atlifm/sorting.ini
+// (qsettings, ключ = канонический путь в процентном кодировании: слэши в ключах
+// qsettings разделители групп, а путь начинается со слэша). при atlifm_config_dir
 // файл <каталог>/sorting.ini рядом с keybinds/plugins/theme.conf (изоляция тестов)
 QSettings makeSortSettings() {
     const QString override = qEnvironmentVariable("ATLIFM_CONFIG_DIR");
@@ -1433,7 +1421,7 @@ void MillerViewContainer::setDirectory(const std::filesystem::path& path) {
     m_pathToSelectAfterRefresh.clear();
     m_pendingSelectRetries = 0;
 
-    // индикатор sudo только внутри каталога, открытого через "Sudo Open" (m_sudoRoot),
+    // индикатор sudo только внутри каталога, открытого через "sudo open" (m_sudoroot),
     // либо там, где чтение реально требует root (restricted)
     const bool insideSudoRoot = !m_sudoRoot.empty() && isInsideDir(m_currentDir, m_sudoRoot);
     const bool isRestricted = (::access(m_currentDir.c_str(), R_OK | X_OK) != 0);
@@ -1467,14 +1455,14 @@ void MillerViewContainer::setDirectory(const std::filesystem::path& path) {
     m_centerView->setFocus();
 
     // пока грузится новый каталог, старая подсказка «permission denied» не должна
-    // висеть; loadingFinished решит заново (updateCenterDeniedOverlay)
+    // висеть; loadingfinished решит заново (updatecenterdeniedoverlay)
     if (m_centerDeniedOverlay) m_centerDeniedOverlay->hide();
 
     emit directoryChanged(m_currentDir);
 }
 
 void MillerViewContainer::setFilter(const QString& filter) {
-    // фильтр транзиентный: живёт, пока открыт редактор; Enter/Esc снимают его; хранения по папкам нет
+    // фильтр транзиентный: живёт, пока открыт редактор; enter/esc снимают его; хранения по папкам нет
     m_centerModel->setFilter(filter);
     if (m_centerModel->rowCount() > 0) {
         m_centerView->setCurrentIndex(m_centerModel->index(0, 0));
@@ -1542,9 +1530,9 @@ std::vector<std::filesystem::path> MillerViewContainer::currentEntries() const {
     }
     if (!entries.empty()) return entries;
 
-    // Палитра может открыться до асинхронной загрузки модели или в момент,
-    // когда m_currentDir ещё не выставлен. Читаем каталог напрямую, иначе
-    // поиск показывает "No entries" в непустой папке.
+    // палитра может открыться до асинхронной загрузки модели или в момент,
+    // когда m_currentdir ещё не выставлен. читаем каталог напрямую, иначе
+    // поиск показывает "no entries" в непустой папке.
     std::filesystem::path scanDir = m_currentDir;
     if (scanDir.empty()) scanDir = m_centerModel->currentDirectory();
     if (scanDir.empty()) return entries;
@@ -1578,7 +1566,7 @@ void MillerViewContainer::toggleHidden() {
 }
 
 void MillerViewContainer::setSortMode(int mode) {
-    // перехват плагином: sort_name/sort_size/sort_date/sort_type (Alt+1..4, ПКМ Sort By)
+    // перехват плагином: sort_name/sort_size/sort_date/sort_type (alt+1..4, пкм sort by)
     static const char* const sortIds[] = {"sort_name", "sort_size", "sort_date", "sort_type"};
     if (mode >= 0 && mode <= 3 &&
         tryPluginOverride(QLatin1String(sortIds[mode])))
@@ -1595,7 +1583,7 @@ void MillerViewContainer::toggleSortDirection() {
     emit messageEmitted(sortedByMessage(m_centerModel));
 }
 
-// ПКМ по иконке сортировки: дефолт = Name ascending; запись папки в sorting.ini
+// пкм по иконке сортировки: дефолт = name ascending; запись папки в sorting.ini
 // перезаписывается, т.е. папка забывает свой режим
 void MillerViewContainer::resetSortToDefault() {
     if (m_centerModel) m_centerModel->setSortMode(0, true);
@@ -1604,8 +1592,8 @@ void MillerViewContainer::resetSortToDefault() {
 }
 
 namespace {
-// меню сортировки в стиле TUI: строка «· Name» и отдельная кнопка инверсии «⇅» у каждого
-// пункта; прямой порядок подсвечен зелёным (Accent/AccentFg), инверсный синим (Sapphire/Base)
+// меню сортировки в стиле tui: строка «· name» и отдельная кнопка инверсии «⇅» у каждого
+// пункта; прямой порядок подсвечен зелёным (accent/accentfg), инверсный синим (sapphire/base)
 class SortMenuPart : public QLabel {
 public:
     SortMenuPart(const QString& text, QWidget* parent) : QLabel(text, parent) {
@@ -1623,14 +1611,14 @@ public:
     }
     void setIdleColor(const QColor& c) { m_idleFg = c; applyStyle(); }
     // размер шрифта в персональной таблице стилей приложения
-    // перебивает QWidget::setFont
+    // перебивает qwidget::setfont
     void setFontPx(int px) { m_fontPx = px; applyStyle(); }
 
 protected:
     void mousePressEvent(QMouseEvent* e) override {
         if (e->button() == Qt::LeftButton) { m_pressed = true; applyStyle(); }
         QLabel::mousePressEvent(e);
-        e->accept(); // клик обработан здесь и не должен уходить в QMenu
+        e->accept(); // клик обработан здесь и не должен уходить в qmenu
     }
     void mouseReleaseEvent(QMouseEvent* e) override {
         m_pressed = false;
@@ -1638,7 +1626,7 @@ protected:
         const bool inside = rect().contains(e->position().toPoint());
         if (e->button() == Qt::LeftButton && inside && onClicked) onClicked();
         QLabel::mouseReleaseEvent(e);
-        e->accept(); // иначе QMenu считает отпускание своей командой и закрывается
+        e->accept(); // иначе qmenu считает отпускание своей командой и закрывается
     }
     void enterEvent(QEnterEvent* e) override { m_hover = true; applyStyle(); QLabel::enterEvent(e); }
     void leaveEvent(QEvent* e) override { m_hover = false; applyStyle(); QLabel::leaveEvent(e); }
@@ -1663,7 +1651,7 @@ private:
 };
 
 // меню сортировки не закрывается сразу после клика: после первого взаимодействия оно
-// закрывается только когда курсор ушёл за пределы меню, либо по Esc или клику вовне
+// закрывается только когда курсор ушёл за пределы меню, либо по esc или клику вовне
 class SortMenu : public QMenu {
 public:
     explicit SortMenu(QWidget* parent = nullptr) : QMenu(parent) {}
@@ -1685,8 +1673,8 @@ void MillerViewContainer::showSortMenu() {
 
     SortMenu menu(this);
     menu.setFont(Theme::getMonospaceFont(9));
-    // ноль вертикальных полей QMenu: строки прижаты к рамке; QSS виджета перекрывает
-    // общий QMenu { padding: 3px 0px } из application stylesheet
+    // ноль вертикальных полей qmenu: строки прижаты к рамке; qss виджета перекрывает
+    // общий qmenu { padding: 3px 0px } из application stylesheet
     menu.setStyleSheet(Theme::getApplicationStyleSheet() + QStringLiteral("QMenu { padding: 0px; }"));
 
     struct Parts { SortMenuPart* label; SortMenuPart* inv; int mode; };
@@ -1695,7 +1683,7 @@ void MillerViewContainer::showSortMenu() {
         const int mode = m_centerModel->sortMode();
         const bool asc = m_centerModel->isSortAscending();
         for (const auto& p : parts) {
-        // активна строка режима в его дефолтном направлении (Name ↑, Size ↓, Date ↓), кнопка ⇅ в инвертированном
+        // активна строка режима в его дефолтном направлении (name ↑, size ↓, date ↓), кнопка ⇅ в инвертированном
             const bool isDefaultDir = (asc == Models::FileSystemModel::defaultSortAscending(p.mode));
             p.label->setActive(p.mode == mode && isDefaultDir);
             p.inv->setActive(p.mode == mode && !isDefaultDir);
@@ -1715,7 +1703,7 @@ void MillerViewContainer::showSortMenu() {
         labelPart->setActiveColors(Theme::Colors::SelectionBg(), Theme::Colors::SelectionFg());
         auto* invPart = new SortMenuPart(QStringLiteral("\u21C5"), row);
         invPart->setObjectName(QStringLiteral("sortPartInv"));
-        // кнопка инверсии крупнее текста: размер в персональном QSS, иначе общий QSS приложения его съедает
+        // кнопка инверсии крупнее текста: размер в персональном qss, иначе общий qss приложения его съедает
         invPart->setFontPx(Theme::uiConfig().fontSize + 4);
         invPart->setActiveColors(Theme::Colors::Sapphire(), Theme::Colors::Base());
         invPart->setIdleColor(Theme::Colors::Subtext());
@@ -1723,9 +1711,9 @@ void MillerViewContainer::showSortMenu() {
 
         parts.push_back({labelPart, invPart, mode});
 
-        // режим в его дефолтном направлении (Name ↑, Size ↓, Date ↓), кнопка ⇅ инвертированное
+        // режим в его дефолтном направлении (name ↑, size ↓, date ↓), кнопка ⇅ инвертированное
         // направление; повторный клик по активному состоянию ничего не делает; меню не закрываем,
-        // SortMenu закроется при клике и уводе курсора или по Esc
+        // sortmenu закроется при клике и уводе курсора или по esc
         labelPart->onClicked = [this, &menu, mode, &refreshStates]() {
             const bool defaultAsc = Models::FileSystemModel::defaultSortAscending(mode);
             if (m_centerModel->sortMode() != mode) {
@@ -1739,7 +1727,7 @@ void MillerViewContainer::showSortMenu() {
         invPart->onClicked = [this, &menu, mode, &refreshStates]() {
             const bool defaultAsc = Models::FileSystemModel::defaultSortAscending(mode);
             if (m_centerModel->sortMode() != mode) {
-                setSortMode(mode); // → дефолт, ниже инвертируем
+                setSortMode(mode); // и дефолт, ниже инвертируем
             }
             if (m_centerModel->isSortAscending() == defaultAsc) {
                 toggleSortDirection();
@@ -1770,7 +1758,7 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
         target = sel.empty() ? m_currentDir : sel.front();
     }
     // классификация target без привилегированной пробы: оверлей передаёт текущий
-    // каталог (по определению каталог), меню элемент с типом, известным модели (IsDirRole)
+    // каталог (по определению каталог), меню элемент с типом, известным модели (isdirrole)
     std::filesystem::path dir = target;
     std::error_code dirEc;
     if (!std::filesystem::is_directory(target, dirEc)
@@ -1787,7 +1775,7 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
 
     // одна авторизация на действие где живой тикет молча запускает sudo find
     // иначе ровно один вызов pkexec и его вывод наполняет колонки
-    // через provideSudoListingTree а вторых привилегированных вызовов нет
+    // через providesudolistingtree а вторых привилегированных вызовов нет
     // без polkit резерв: попап пароля и запуск sudo find
     bool folderEmpty = false;
     bool sudoDenied = false;
@@ -1808,8 +1796,8 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
 
         // рекурсивный листинг (maxdepth 5) одним вызовом: после одной авторизации
         // в кэше листинги всех подкаталогов, навигация на любую глубину без новых
-        // диалогов pkexec. Разделитель NUL записей + полный путь %p
-        // (см. provideSudoListingTree): имя с '\n' не инжектит записи, хвост,
+        // диалогов pkexec. разделитель nul записей + полный путь %p
+        // (см. providesudolistingtree): имя с '\n' не инжектит записи, хвост,
         // обрезанный по лимиту head вывод отбрасывается
         QString treeOut;
         QString treeErr;
@@ -1848,12 +1836,12 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
         return;
     }
 
-    // листинг в модель ДО setDirectory/refresh: скан не должен сделать свой привилегированный
+    // листинг в модель до setdirectory/refresh: скан не должен сделать свой привилегированный
     // вызов (двойной диалог); рекурсивный вывод раскладывается по каталогам дерева,
     // вся глубина обслуживается кэшем
     if (haveRootOut) Core::XdgUtils::provideSudoListingTree(dir, rootOut);
 
-    // запоминаем корень sudo: индикатор горит только внутри него (см. setDirectory)
+    // запоминаем корень sudo: индикатор горит только внутри него (см. setdirectory)
     m_sudoRoot = dir;
     setDirectory(dir);
     refresh();
@@ -1914,7 +1902,7 @@ void MillerViewContainer::selectAll() {
         m_previewPane->selectAllArchiveEntries();
         return;
     }
-    // selectAll триггерит selectionChanged и синхронизирует модель
+    // selectall триггерит selectionchanged и синхронизирует модель
     m_centerView->selectAll();
 }
 
@@ -2081,6 +2069,9 @@ void MillerViewContainer::positionCenterDeniedOverlay() {
 
 bool MillerViewContainer::eventFilter(QObject* watched, QEvent* event) {
     if (m_archiveTree && watched == m_archiveTree && event->type() == QEvent::KeyPress) {
+        if (auto* sb = window()->findChild<Widgets::TuiStatusBar*>(); sb && sb->isPromptActive()) {
+            return false;
+        }
         auto* ke = static_cast<QKeyEvent*>(event);
         if (ke->key() == Qt::Key_Escape || ke->key() == Qt::Key_Backspace) {
             leaveArchive();
@@ -2111,7 +2102,7 @@ void MillerViewContainer::setColumnsConfig(bool showParent, bool showPreview,
     m_previewColumnEnabled = showPreview;
     // сохранённая раскладка может быть любой ширины: жёсткие 800/1000
     // обрезали реальный preview и после рестарта колонки выглядели иначе.
-    // Реальный предел проверяет applyResponsiveSizes() по ширине окна.
+    // реальный предел проверяет applyresponsivesizes() по ширине окна.
     m_parentColumnWidth = std::clamp(parentWidth, 80, 10000);
     m_previewColumnWidth = std::clamp(previewWidth, 80, 10000);
     m_initialSizesApplied = false;
@@ -2204,21 +2195,21 @@ void MillerViewContainer::applyResponsiveSizes() {
         visibilityChanged = true;
     }
 
-    // Комфортная раскладка при первом показе. Сохранённую раскладку
+    // комфортная раскладка при первом показе. сохранённую раскладку
     // применяем на каждом изменении размера, пока пользователь не потянул
-    // рукоятку: так промежуточный размер окна от WM не «замораживает»
+    // рукоятку: так промежуточный размер окна от wm не «замораживает»
     // неправильные ширины после рестарта.
     if ((m_exactInitialWidths || !m_initialSizesApplied) && total >= 460) {
         m_initialSizesApplied = true;
         const int handles = 2 * m_splitter->handleWidth();
         const int avail = std::max(0, total - handles);
-        // Боковые колонки не должны выглядеть полосками: по умолчанию даём
+        // боковые колонки не должны выглядеть полосками: по умолчанию даём
         // родителю до четверти и превью до трети ширины а значения конфига работают
         // как желаемая ширина в этих пределах.
-        // Для сохранённой раскладки ширины должны восстанавливаться ровно.
-        // Ограничение avail/2 ломало раскладки, где preview шире половины окна:
+        // для сохранённой раскладки ширины должны восстанавливаться ровно.
+        // ограничение avail/2 ломало раскладки, где preview шире половины окна:
         // например, 120 + 786 + 1000 при окне 1910 сохранялось как 1000,
-        // а после рестарта превращалось в 953. Оставляем запас только на
+        // а после рестарта превращалось в 953. оставляем запас только на
         // вторую боковую колонку (120) и минимальный центр (200).
         const int exactSideCap = std::max(120, avail - 320);
         const int parentCap = m_exactInitialWidths
@@ -2227,7 +2218,7 @@ void MillerViewContainer::applyResponsiveSizes() {
         const int previewCap = m_exactInitialWidths
             ? exactSideCap
             : std::max(120, avail * 35 / 100);
-        // wantParent/wantPreview, а не isVisible(): при первом resizeEvent
+        // wantparent/wantpreview, а не isvisible(): при первом resizeevent
         // главное окно еще не показано и видимость у детей false
         int parentW = wantParent
             ? std::clamp(m_parentColumnWidth, 120, parentCap)
@@ -2252,7 +2243,7 @@ void MillerViewContainer::applyResponsiveSizes() {
         return;
     }
 
-    // обычный ресайз окна размеры не перезаписываем: QSplitter сам плавно
+    // обычный ресайз окна размеры не перезаписываем: qsplitter сам плавно
     // масштабирует панели, иначе рукоятка переносилась в другую сторону
     // вместо следования за мышью
     if (!visibilityChanged) return;
@@ -2289,7 +2280,9 @@ void MillerViewContainer::applyResponsiveSizes() {
 }
 
 void MillerViewContainer::onCenterSelectionChanged(const QItemSelection& /*selected*/, const QItemSelection& /*deselected*/) {
-    // синхронизируем выделение Qt с элементами модели для выделения рамкой мышью
+    if (auto* sb = window()->findChild<Widgets::TuiStatusBar*>(); sb && sb->isPasswordPromptActive())
+        sb->cancelInlinePrompt();
+    // синхронизируем выделение qt с элементами модели для выделения рамкой мышью
     if (m_centerView->selectionModel()) {
         auto selIndexes = m_centerView->selectionModel()->selectedIndexes();
         std::unordered_set<int> selectedRows;
@@ -2310,7 +2303,7 @@ void MillerViewContainer::updateCenterSelection() {
         QString pathStr = curr.data(Models::FileSystemModel::PathRole).toString();
         std::filesystem::path p(pathStr.toUtf8().toStdString());
         m_previewPane->previewPath(p);
-        // соседние видео/PDF греются заранее; prefetch сам ограничивает очередь
+        // соседние видео/pdf греются заранее; prefetch сам ограничивает очередь
         const int row = curr.row();
         if (row > 0) {
             const QString prev = m_centerModel->index(row - 1, 0)
@@ -2335,7 +2328,7 @@ void MillerViewContainer::updateCenterSelection() {
 
     int totalCount = m_centerModel->rowCount();
     int selCount = static_cast<int>(m_centerModel->selectedPaths().size());
-    // правило 2A: галочка только при 2+ явно выбранных
+    // правило 2a: галочка только при 2+ явно выбранных
     m_centerDelegate->setCheckmarksEnabled(selCount > 1);
     if (m_centerView->viewport()) m_centerView->viewport()->update();
     int curRow = m_centerView->currentIndex().isValid() ? (m_centerView->currentIndex().row() + 1) : (totalCount > 0 ? 1 : 0);
@@ -2382,6 +2375,8 @@ void MillerViewContainer::openFile(const std::filesystem::path& path) {
 void MillerViewContainer::onArchiveEntrySelected(const QString& normalizedPath,
                                                  const QString& memberPath, bool isDir) {
     if (!isArchiveViewActive() || !m_previewPane) return;
+    if (auto* sb = window()->findChild<Widgets::TuiStatusBar*>(); sb && sb->isPasswordPromptActive())
+        sb->cancelInlinePrompt();
     ++m_archivePreviewRequest;
     m_archivePreviewQueued = false;
     if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
@@ -2445,7 +2440,7 @@ void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath)
     m_archivePreviewQueued = false;
     m_archivePreviewPendingPath.clear();
     m_archivePreviewPendingMember.clear();
-    // файловые операции/Escape не должны действовать на скрытый архив под страницей
+    // файловые операции/escape не должны действовать на скрытый архив под страницей
     if (m_centerModel) m_centerModel->clearSelection();
     if (m_centerView) {
         m_centerView->clearSelection();
@@ -2493,6 +2488,7 @@ void MillerViewContainer::leaveArchive() {
     m_archivePreviewPendingMember.clear();
     if (m_previewPane) m_previewPane->clearPreview();
     if (m_archiveTree) m_archiveTree->clearArchive();
+    if (m_archiveModel) m_archiveModel->clear();
     if (m_centerStack) m_centerStack->setCurrentWidget(m_centerView);
     // возвращаем левую колонку к родителю текущего каталога
     if (m_parentModel) {
@@ -2517,7 +2513,7 @@ void MillerViewContainer::onFilesDropped(const std::vector<std::filesystem::path
                                          const std::filesystem::path& targetDir,
                                          Qt::DropAction action,
                                          Qt::KeyboardModifiers modifiers) {
-    // handleDrop уже делает selectPathAfterRefresh(firstDest) + refresh(); лишний
+    // handledrop уже делает selectpathafterrefresh(firstdest) + refresh(); лишний
     // отложенный refresh создал бы гонку и сбросил фокус строку 0
     if (auto* view = qobject_cast<MillerListView*>(sender())) view->setFocus();
     Dnd::DragDropHandler::handleDrop(sources, targetDir, action, modifiers, this);
@@ -2605,7 +2601,7 @@ void MillerViewContainer::copySelection() {
 
     QMimeData* mimeData = buildClipboardMimeData(sel, false);
 
-    // если копируется один файл изображения, кладём в буфер и QImage, чтобы Ctrl+V работал напрямую в браузерных AI чатах
+    // если копируется один файл изображения, кладём в буфер и qimage, чтобы ctrl+v работал напрямую в браузерных ai чатах
     if (sel.size() == 1) {
         std::string ext = sel.front().extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -2655,7 +2651,7 @@ void MillerViewContainer::pasteClipboard() {
         return;
     }
 
-    // вставка изображения / скриншота / data: URI или удалённого URL из буфера в текущий каталог
+    // вставка изображения / скриншота / data: uri или удалённого url из буфера в текущий каталог
     Dnd::DragDropHandler::handleMimeDrop(mimeData, m_currentDir, Qt::CopyAction, Qt::NoModifier, this);
 }
 
@@ -2781,7 +2777,7 @@ void MillerViewContainer::renamePath(const std::filesystem::path& oldPath) {
         }
 
         std::filesystem::path newPath = oldPath.parent_path() / toFs(newName);
-        // rename() на POSIX молча перезаписывает существующий dest, не теряем
+        // rename() на posix молча перезаписывает существующий dest, не теряем
         // чужой файл без явного согласия
         std::error_code existsEc;
         if (std::filesystem::exists(newPath, existsEc)) {
@@ -2793,7 +2789,7 @@ void MillerViewContainer::renamePath(const std::filesystem::path& oldPath) {
         QString err;
         if (Core::XdgUtils::moveItem(oldPath, newPath, err)) {
             Core::UndoManager::instance().recordMove(oldPath, newPath, {}, "Rename");
-            // правило 3A: фокусируем переименованную цель после асинхронного пересканирования
+            // правило 3a: фокусируем переименованную цель после асинхронного пересканирования
             selectPathAfterRefresh(newPath);
             refresh();
             emit messageEmitted("Renamed");
@@ -2833,13 +2829,13 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
         return;
     }
 
-    // запоминаем соседа, чтобы после удаления фокус не попал на строку 0 (правило 3B)
+    // запоминаем соседа, чтобы после удаления фокус не попал на строку 0 (правило 3b)
     std::filesystem::path neighbour = computeNeighbourPath(sel);
 
     emit messageEmitted(QString("Moving %1 to trash...").arg(sel.size()));
     QPointer<MillerViewContainer> self(this);
     // каждый элемент это отдельный шаг задачи: прогресс и отмена между файлами,
-    // а не одна непрозрачная пачка. Ошибка одного файла не отменяет остальные.
+    // а не одна непрозрачная пачка. ошибка одного файла не отменяет остальные.
     Core::Tasks::TaskManager::instance().submit(
         QString("Trash %1 item(s)").arg(sel.size()),
         QStringLiteral("io"),
@@ -2863,8 +2859,8 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
                 ctx.progress(static_cast<qint64>(i + 1), static_cast<qint64>(sel.size()));
             }
 
-            // Не пишем в лог каждый успешный файл, потому что на тысячах
-            // файлов это забивает кольцевой буфер и UI. Ошибки логируем выше.
+            // не пишем в лог каждый успешный файл, потому что на тысячах
+            // файлов это забивает кольцевой буфер и ui. ошибки логируем выше.
             if (!moved.empty()) {
                 ctx.log(QStringLiteral("Moved %1 item(s) to trash").arg(moved.size()));
             }
@@ -2923,8 +2919,8 @@ void MillerViewContainer::deletePathsPermanently(const std::vector<std::filesyst
                 const bool ok = Core::XdgUtils::deletePermanently(sel, err, ctx.cancelToken());
                 const bool cancelled = ctx.cancelled();
 
-                // При отмене часть файлов уже могла быть удалена. Считаем
-                // фактический результат и не пишем «Delete cancelled», если
+                // при отмене часть файлов уже могла быть удалена. считаем
+                // фактический результат и не пишем «delete cancelled», если
                 // удаление все таки прошло
                 size_t removed = 0;
                 for (const auto& p : sel) {
@@ -3012,8 +3008,8 @@ void MillerViewContainer::compressSelection(const QString& format) {
 
 void MillerViewContainer::extractHere() {
     if (tryPluginOverride("extract_here")) return;
-    // Extract Here: файлы архива прямо в текущую папку (как в Nautilus/Dolphin),
-    // т.к. пункт называется «Here», подпапка с именем архива не создаётся
+    // extract here: файлы архива прямо в текущую папку (как в nautilus/dolphin),
+    // т.к. пункт называется «here», подпапка с именем архива не создаётся
     extractSelectionInto(m_currentDir);
 }
 
@@ -3028,8 +3024,8 @@ void MillerViewContainer::extractArchiveInto(const std::filesystem::path& archiv
                                              const std::filesystem::path& destDir) {
     if (archive.empty()) return;
 
-    // распаковка в destDir, который при необходимости создаёт сам extractArchive;
-    // фон: bsdtar/7z ждут бесконечно, не фризим GUI; по завершении выбираем цель,
+    // распаковка в destdir, который при необходимости создаёт сам extractarchive;
+    // фон: bsdtar/7z ждут бесконечно, не фризим gui; по завершении выбираем цель,
     // если она в текущем каталоге
     std::filesystem::path arc = archive;
     emit messageEmitted("Extracting...");
@@ -3350,7 +3346,7 @@ void MillerViewContainer::createNewFolder() {
             refresh();
             emit messageEmitted("Created folder");
         } else {
-            // каталог, защищённый root (Sudo Open): один привилегированный mkdir
+            // каталог, защищённый root (sudo open): один привилегированный mkdir
             // вместе со свежим листингом find; иначе refresh показал бы старый кэш,
             // а второй привилегированный вызов второй диалог
             const bool denied = (ec == std::errc::permission_denied ||
@@ -3398,8 +3394,8 @@ void MillerViewContainer::createNewFile() {
             refresh();
             emit messageEmitted("Created file");
         } else {
-            // каталог, защищённый root (Sudo Open): привилегированный touch +
-            // свежий листинг тем же вызовом (см. createNewFolder)
+            // каталог, защищённый root (sudo open): привилегированный touch +
+            // свежий листинг тем же вызовом (см. createnewfolder)
             const int openErrno = errno;
             const bool denied = (openErrno == EACCES || openErrno == EPERM);
             QString sudoErr;

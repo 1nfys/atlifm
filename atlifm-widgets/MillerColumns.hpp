@@ -76,7 +76,7 @@ protected:
     // пути для исходящего драга; страница архива переопределяет: пути виртуальные (архив + запись)
     virtual std::vector<std::filesystem::path> dragOutPaths(const QModelIndex& startIndex) const;
 
-    // старт исходящего драга; страница архива переопределяет: сначала распаковка во временный кэш, потом QDrag
+    // старт исходящего драга; страница архива переопределяет: сначала распаковка во временный кэш, потом qdrag
     virtual void startDragOut(const std::vector<std::filesystem::path>& paths);
 
 private:
@@ -114,7 +114,7 @@ public:
     void clearGlobalSearch();
     bool hasGlobalSearch() const;
     void focusCenter();
-    // Архив открыт в центральной области (страница поверх колонок); путь вкладки при этом не меняется
+    // архив открыт в центральной области (страница поверх колонок); путь вкладки при этом не меняется
     bool isArchiveViewActive() const { return !m_archivePath.empty(); }
     const std::filesystem::path& archivePath() const { return m_archivePath; }
     void leaveArchive();
@@ -123,8 +123,8 @@ public:
     std::vector<std::filesystem::path> currentEntries() const;
     void refresh();
 
-    // режим выбора файла (FileChooserDialog): двойной клик/Enter по файлу отдаёт
-    // сигналом fileChosenRequested, диалог сам решает (портал или «Open In»)
+    // режим выбора файла (filechooserdialog): двойной клик/enter по файлу отдаёт
+    // сигналом filechosenrequested, диалог сам решает (портал или «open in»)
     void setFileChooseMode(bool enabled) { m_fileChooseMode = enabled; }
     // мультивыбор строк центральной колонки (портал multiple)
     void setMultiSelectEnabled(bool enabled);
@@ -144,7 +144,7 @@ public:
     void pasteClipboard();
     void copyPaths(int mode);
     void renameCurrent();
-    // массовое переименование: результат из встроенной панели BulkRenamePanel
+    // массовое переименование: результат из встроенной панели bulkrenamepanel
     void applyBulkRenames(const std::vector<std::pair<std::filesystem::path,
                                                       std::filesystem::path>>& renames);
     // операции над явными путями (результаты поиска): не зависят от выделения колонки
@@ -157,10 +157,10 @@ public:
     void trashSelection();
     void deletePermanentlySelection();
     void compressSelection(const QString& format = ".tar.gz");
-    // Extract Here сразу в текущую папку; In открывает выбор каталога
+    // extract here сразу в текущую папку; in открывает выбор каталога
     void extractHere();
     void extractSelectionInto(const std::filesystem::path& destDir);
-    // распаковка конкретного архива (напр. из меню папки превью) в destDir
+    // распаковка конкретного архива (напр. из меню папки превью) в destdir
     void extractArchiveInto(const std::filesystem::path& archive,
                             const std::filesystem::path& destDir);
     void openTerminal();
@@ -169,7 +169,7 @@ public:
     void bookmarkSelection();
     void showProperties();
     void showPropertiesFor(const std::filesystem::path& path);
-    void runPluginById(const QString& pluginId); // центр: выделение + m_currentDir
+    void runPluginById(const QString& pluginId); // центр: выделение + m_currentdir
     void runPluginByIdIn(const QString& pluginId,
                          const std::vector<std::filesystem::path>& selection,
                          const std::filesystem::path& cwd,
@@ -190,7 +190,7 @@ public:
     // действие плагина плюсов через хост нативных плагинов где берется выделение центра и текущая папка и сначала проверяется цепочка переопределений
     void runNativePluginAction(const QString& actionId);
     void runNativePluginCommand(const QString& actionId, const QString& query);
-    // перехват действия плагином (Override = <id> в plugins/*.conf): вместо встроенной операции
+    // перехват действия плагином (override = <id> в plugins/*.conf): вместо встроенной операции
     // запускает команду плагина, true = поглощено; без контекста выделение центра + текущий каталог;
     // false, если override для действия не задан (вызывает встроенное)
     bool tryPluginOverride(const QString& actionId);
@@ -200,7 +200,7 @@ public:
                                const std::filesystem::path& cwd);
 
     // сортировка для каждой папки отдельно (~/.config/atlifm/sorting.ini,
-    // или <каталог>/sorting.ini при ATLIFM_CONFIG_DIR): папка → «режим|порядок»;
+    // или <каталог>/sorting.ini при atlifm_config_dir): папка и «режим|порядок»;
     // каждая колонка сортируется по своей папке (центр текущая, левая родителя)
     void applySortForDirectory(const std::filesystem::path& dir);
     void saveSortForCurrentDir();
@@ -218,15 +218,15 @@ public:
     void setColumnsConfig(bool showParent, bool showPreview,
                           int parentWidth, int previewWidth,
                           bool exactWidths = false);
-    // пересчитать размеры после show/hide/сброса раскладки, когда QSplitter
+    // пересчитать размеры после show/hide/сброса раскладки, когда qsplitter
     // уже получил финальную геометрию (иначе колонки накладываются друг на друга)
     void relayoutColumns();
-    // текущее состояние для сохранения раскладки (реальные ширины QSplitter)
+    // текущее состояние для сохранения раскладки (реальные ширины qsplitter)
     bool parentColumnEnabled() const { return m_parentColumnEnabled; }
     bool previewColumnEnabled() const { return m_previewColumnEnabled; }
     int parentColumnWidth() const;
     int previewColumnWidth() const;
-    // Home/End: первый/последний элемент центральной колонки
+    // home/end: первый/последний элемент центральной колонки
     void selectFirst();
     void selectLast();
     void selectPathAfterRefresh(const std::filesystem::path& p);
@@ -235,7 +235,7 @@ public:
     void restoreMultiSelection(const std::unordered_set<std::string>& paths, const std::filesystem::path& focusItem);
     bool isCurrentSudo() const { return m_isCurrentSudo; }
     void setCurrentSudo(bool sudo);
-    // каталог, открытый через "Sudo Open": индикатор sudo горит только внутри него
+    // каталог, открытый через "sudo open": индикатор sudo горит только внутри него
     const std::filesystem::path& sudoRoot() const { return m_sudoRoot; }
     void setSudoRoot(const std::filesystem::path& root) { m_sudoRoot = root; }
 
@@ -251,20 +251,20 @@ signals:
     void openInNewTabRequested(const std::filesystem::path& path);
     void typeAheadSearchTriggered(const QString& text);
     void filterTriggered();
-    // несколько выделенных элементов: MainWindow открывает встроенную панель
+    // несколько выделенных элементов: mainwindow открывает встроенную панель
     // переименования (не отдельное окно)
     void bulkRenameRequested(const std::vector<std::filesystem::path>& paths);
     void sudoModeChanged(bool isSudo);
-    // свойства (компактные): единый оверлей в MainWindow для ПКМ, Alt+Enter
-    // и панели закладок; для корня диска/ФС в том же оверлее открывается Disk Usage
+    // свойства (компактные): единый оверлей в mainwindow для пкм, alt+enter
+    // и панели закладок; для корня диска/фс в том же оверлее открывается disk usage
     void propertiesRequested(const std::filesystem::path& path);
-    // Open With… полноразмерный диалог TUI в MainWindow (оверлей)
+    // open with… полноразмерный диалог tui в mainwindow (оверлей)
     void openWithDialogRequested(const std::filesystem::path& path);
-    // Extract In… MainWindow открывает выбор каталога (как при выборе файла)
+    // extract in… mainwindow открывает выбор каталога (как при выборе файла)
     void extractInRequested();
-    // Extract In… для архива из папки превью (тот же оверлей, но распаковывается этот архив, не выделение колонок)
+    // extract in… для архива из папки превью (тот же оверлей, но распаковывается этот архив, не выделение колонок)
     void extractInPathRequested(const std::filesystem::path& archivePath);
-    // режим выбора файла: двойной клик/Enter по файлу (см. setFileChooseMode)
+    // режим выбора файла: двойной клик/enter по файлу (см. setfilechoosemode)
     void fileChosenRequested(const std::filesystem::path& path);
     // архив открыт в центре / закрыт возвратом в каталог
     void archiveEntered(const std::filesystem::path& archivePath);
@@ -342,12 +342,11 @@ private:
     QPointer<TuiContextMenu> m_activeContextMenu;
     bool m_archiveSelectionActive{false};
 
-    // центральная страница архива внутри центральной колонки; m_archivePath пуст вне неё
+    // центральная страница архива внутри центральной колонки; m_archivepath пуст вне неё
     QStackedWidget* m_centerStack{nullptr};
     QWidget* m_archivePage{nullptr};
     ArchiveTreeWidget* m_archiveTree{nullptr};
     Models::ArchiveModel* m_archiveModel{nullptr};
-    QPushButton* m_archiveBackBtn{nullptr};
     std::filesystem::path m_archivePath;
     QTimer* m_archivePreviewTimer{nullptr};
     QString m_archivePreviewPendingPath;

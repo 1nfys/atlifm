@@ -30,7 +30,7 @@ struct PaletteDefinition {
     QColor text{0xcd, 0xd6, 0xf4};
     QColor subtext{0xa6, 0xad, 0xc8};
     QColor dim{0x6c, 0x70, 0x86};
-    QColor accent{0x6b, 0xbc, 0xc6};     // голубая буква 'A'
+    QColor accent{0x6b, 0xbc, 0xc6};     // голубая буква 'a'
     QColor accentFg{0x0e, 0x0e, 0x25};   // тёмный контрастный текст на акценте
     QColor blue{0x6b, 0xbc, 0xc6};
     QColor sapphire{0x74, 0xc7, 0xec};
@@ -43,47 +43,47 @@ struct PaletteDefinition {
 
     // компоненты ui: необязательные переопределения, пусто (invalid) =
     // фолбэк на палитру или родительскую роль (цепочки в colors::)
-    QColor ovBorder;              // все рамки/швы/разделители   → surface1
-    QColor ovSelectionBg;         // выделение в списках/меню    → accent
-    QColor ovSelectionFg;         // текст выделения             → accentFg
-    QColor ovHoverBg;             // подсветка под курсором      → surface0
-    QColor ovDropBg;              // цель drag&drop / таргет по ПКМ → surface1
-    QColor ovDropBorder;          // рамка/текст цели drag&drop  → accent
-    QColor ovTabBg;               // фон таббара                 → base
-    QColor ovTabFg;               // неактивная вкладка          → dim
-    QColor ovTabActiveBg;         // фон активной вкладки        → base
-    QColor ovTabActiveFg;         // префикс с номером активной      → accent
-    QColor ovTabActiveText;       // имя активной вкладки        → text
-    QColor ovTabHoverBg;          // вкладка под курсором        → hover_bg
-    QColor ovTabCloseFg;          // крестик закрытия            → subtext
-    QColor ovTabCloseHoverFg;     // крестик под курсором        → red
-    QColor ovMenuBg;              // фон меню                    → mantle
-    QColor ovMenuFg;              // текст меню                  → text
-    QColor ovMenuBorder;          // рамка меню                  → border
-    QColor ovMenuSelectedBg;      // выделенный пункт меню       → selection_bg
-    QColor ovMenuSelectedFg;      // текст выделенного пункта    → selection_fg
-    QColor ovMenuDisabledFg;      // выключенный пункт меню      → dim
-    QColor ovInputBg;             // фон полей ввода             → mantle
-    QColor ovInputFg;             // текст полей ввода           → text
-    QColor ovInputBorder;         // рамка полей ввода           → border
-    QColor ovInputFocusBorder;    // рамка поля в фокусе         → accent
-    QColor ovButtonBg;            // фон кнопок                  → mantle
-    QColor ovButtonFg;            // текст кнопок                → text
-    QColor ovButtonBorder;        // рамка кнопок                → border
-    QColor ovButtonHoverBg;       // кнопка под курсором         → selection_bg
-    QColor ovButtonHoverFg;       // текст кнопки под курсором   → selection_fg
-    QColor ovCheckboxBorder;      // рамка чекбокса              → border
-    QColor ovCheckboxCheckedBg;   // включённый чекбокс          → selection_bg
-    QColor ovScrollbarBg;         // дорожка скроллбара          → base
-    QColor ovScrollbarHandle;     // ползунок скроллбара         → surface1
-    QColor ovScrollbarHandleHover;// ползунок под курсором       → accent
-    QColor ovRubberbandBorder;    // рамка резинки выделения     → accent
-    QColor ovRubberbandBg;        // заливка резинки             → accent@60
-    QColor ovOverlayBg;           // фон оверлеев/панелей        → base
-    QColor ovOverlayBorder;       // рамка оверлеев (2px)        → accent
-    QColor ovBadgeBg;             // бейдж drag&drop             → crust
-    QColor ovBadgeBorder;         // рамка бейджа                → accent
-    QColor ovBadgeFg;             // текст бейджа                → text
+    QColor ovBorder;              // все рамки/швы/разделители   и surface1
+    QColor ovSelectionBg;         // выделение в списках/меню    и accent
+    QColor ovSelectionFg;         // текст выделения             и accentfg
+    QColor ovHoverBg;             // подсветка под курсором      и surface0
+    QColor ovDropBg;              // цель drag&drop / таргет по пкм и surface1
+    QColor ovDropBorder;          // рамка/текст цели drag&drop  и accent
+    QColor ovTabBg;               // фон таббара                 и base
+    QColor ovTabFg;               // неактивная вкладка          и dim
+    QColor ovTabActiveBg;         // фон активной вкладки        и base
+    QColor ovTabActiveFg;         // префикс с номером активной      и accent
+    QColor ovTabActiveText;       // имя активной вкладки        и text
+    QColor ovTabHoverBg;          // вкладка под курсором        и hover_bg
+    QColor ovTabCloseFg;          // крестик закрытия            и subtext
+    QColor ovTabCloseHoverFg;     // крестик под курсором        и red
+    QColor ovMenuBg;              // фон меню                    и mantle
+    QColor ovMenuFg;              // текст меню                  и text
+    QColor ovMenuBorder;          // рамка меню                  и border
+    QColor ovMenuSelectedBg;      // выделенный пункт меню       и selection_bg
+    QColor ovMenuSelectedFg;      // текст выделенного пункта    и selection_fg
+    QColor ovMenuDisabledFg;      // выключенный пункт меню      и dim
+    QColor ovInputBg;             // фон полей ввода             и mantle
+    QColor ovInputFg;             // текст полей ввода           и text
+    QColor ovInputBorder;         // рамка полей ввода           и border
+    QColor ovInputFocusBorder;    // рамка поля в фокусе         и accent
+    QColor ovButtonBg;            // фон кнопок                  и mantle
+    QColor ovButtonFg;            // текст кнопок                и text
+    QColor ovButtonBorder;        // рамка кнопок                и border
+    QColor ovButtonHoverBg;       // кнопка под курсором         и selection_bg
+    QColor ovButtonHoverFg;       // текст кнопки под курсором   и selection_fg
+    QColor ovCheckboxBorder;      // рамка чекбокса              и border
+    QColor ovCheckboxCheckedBg;   // включённый чекбокс          и selection_bg
+    QColor ovScrollbarBg;         // дорожка скроллбара          и base
+    QColor ovScrollbarHandle;     // ползунок скроллбара         и surface1
+    QColor ovScrollbarHandleHover;// ползунок под курсором       и accent
+    QColor ovRubberbandBorder;    // рамка резинки выделения     и accent
+    QColor ovRubberbandBg;        // заливка резинки             и accent@60
+    QColor ovOverlayBg;           // фон оверлеев/панелей        и base
+    QColor ovOverlayBorder;       // рамка оверлеев (2px)        и accent
+    QColor ovBadgeBg;             // бейдж drag&drop             и crust
+    QColor ovBadgeBorder;         // рамка бейджа                и accent
+    QColor ovBadgeFg;             // текст бейджа                и text
 };
 
 // глобальный экземпляр активной палитры под защитой shared_mutex
@@ -118,7 +118,7 @@ namespace Colors {
     inline QColor Teal()     { std::shared_lock lock(s_paletteMutex); return s_currentPalette.teal; }
     inline QColor Cyan()     { return Teal(); }
 
-    // фолбэк роли: theme.conf → палитра → родительская роль,
+    // фолбэк роли: theme.conf и палитра и родительская роль,
     // без конфига цвета ровно прежние
     inline QColor Border() {
         std::shared_lock lock(s_paletteMutex);
@@ -338,7 +338,7 @@ namespace Colors {
     }
 }
 
-// каталог конфигов atlifm: ATLIFM_CONFIG_DIR (тесты/рендеры) или ~/.config/atlifm
+// каталог конфигов atlifm: atlifm_config_dir (тесты/рендеры) или ~/.config/atlifm
 inline QString configDir() {
     const char* override = std::getenv("ATLIFM_CONFIG_DIR");
     if (override && *override) return QString::fromUtf8(override);
@@ -381,7 +381,7 @@ inline bool setConfigValue(const QString& key, const QString& value) {
     return true;
 }
 
-// конфиг темы: ~/.config/atlifm/theme.conf (каталог переопределяется ATLIFM_CONFIG_DIR)
+// конфиг темы: ~/.config/atlifm/theme.conf (каталог переопределяется atlifm_config_dir)
 // формат плоский `key = #rrggbb` (или `#aarrggbb` с альфой), `#` в начале строки это комментарий
 // два слоя: 1) атомы палитры (base, mantle, ... accent, teal, dark)
 // 2) компоненты ui (border, selection_bg, tab_*, menu_*, input_*, button_*,
@@ -530,7 +530,7 @@ inline void applyAppThemeConf(PaletteDefinition& p) {
             int sz = val.toInt(&ok);
             if (ok && sz >= 8 && sz <= 48) {
                 uiConfig().fontSize = sz;
-                // px → pt для текстов QPainter (≈96 dpi): round(sz*0.75)
+                // px и pt для текстов qpainter (≈96 dpi): round(sz*0.75)
                 uiConfig().fontPointSize = std::max(6, (sz * 3 + 2) / 4);
             }
             continue;
@@ -560,7 +560,7 @@ inline void applyAppThemeConf(PaletteDefinition& p) {
         else if (key == "peach")     p.peach = c;
         else if (key == "teal")      p.teal = c;
         else {
-            // компоненты UI (ключ → поле)
+            // компоненты ui (ключ и поле)
             struct RoleKey { const char* key; QColor PaletteDefinition::*field; };
             static const RoleKey roles[] = {
                 {"border",                  &PaletteDefinition::ovBorder},
@@ -632,7 +632,7 @@ inline void reloadPalette() {
 }
 
 // только моноширинные шрифты (без утечки системных serif/sans),
-// семейство кэшируется, чтобы не запрашивать QFontDatabase при каждой отрисовке делегата
+// семейство кэшируется, чтобы не запрашивать qfontdatabase при каждой отрисовке делегата
 inline QFont getMonospaceFont(int pointSize = 10, QFont::Weight weight = QFont::Normal) {
     static const QString s_resolvedFamily = []() -> QString {
         const QStringList available = QFontDatabase::families();
@@ -677,7 +677,7 @@ inline QFont getMonospaceFont(int pointSize = 10, QFont::Weight weight = QFont::
 
 // плотная непрозрачная таблица стилей (сохраняет точную раскладку виджетов tui)
 
-// qcolor → значение css: hex или rgba() при альфе < 255
+// qcolor и значение css: hex или rgba() при альфе < 255
 inline QString cssColor(const QColor& c) {
     if (c.alpha() >= 255) return c.name();
     return QString("rgba(%1, %2, %3, %4)")
@@ -822,7 +822,7 @@ inline QString getApplicationStyleSheet() {
             background: transparent;
         }
 
-        /* верхние вкладки в стиле моноширинного TUI */
+        /* верхние вкладки в стиле моноширинного tui */
         QTabBar::tab {
             background: %11;
             color: %12;
@@ -882,7 +882,7 @@ inline QString getApplicationStyleSheet() {
             background: %18;
             margin: 3px 0px;
         }
-        /* никаких галочек ОС в меню: активное состояние показывается фоном
+        /* никаких галочек в меню: активное состояние показывается фоном
            (invert в меню Sort подсвечен как выделенный элемент, руководство §3.4) */
         QMenu::indicator {
             width: 0px;

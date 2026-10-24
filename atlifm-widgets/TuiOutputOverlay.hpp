@@ -12,7 +12,7 @@ namespace Widgets {
 
 // оверлей вывода внешнего плагина в правом нижнем углу окна, рамка accent 2px
 // фокус не забирает, колонки остаются рабочими, пока плагин печатает
-// esc (глобальный cancel в MainWindow) или close скрывают, процесс не убивается
+// esc (глобальный cancel в mainwindow) или close скрывают, процесс не убивается
 class TuiOutputOverlay : public QWidget {
     Q_OBJECT
 public:

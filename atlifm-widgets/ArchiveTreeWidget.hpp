@@ -41,6 +41,7 @@ public:
     bool isExtracting() const { return m_extracting; }
 
 signals:
+    void leaveArchiveRequested();
     void selectionInteractionStarted();
     void messageRequested(const QString& message);
     void entrySelected(const QString& normalizedPath, const QString& memberPath, bool isDir);

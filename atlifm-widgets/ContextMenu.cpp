@@ -197,8 +197,8 @@ void TuiContextMenu::populateMenu() {
             });
         }
 
-        // extract если выбранный элемент архив, extract in это выбор каталога через FileChooserDialog,
-        // extract here сразу в текущую папку, формат проверяет XdgUtils::isArchive
+        // extract если выбранный элемент архив, extract in это выбор каталога через filechooserdialog,
+        // extract here сразу в текущую папку, формат проверяет xdgutils::isarchive
         if (!m_selectedPaths.empty() && Core::XdgUtils::isArchive(m_selectedPaths.front())) {
             auto extractMenu = addMenu(QString::fromUtf8("\U000F06EB Extract"));
             extractMenu->setFont(font());

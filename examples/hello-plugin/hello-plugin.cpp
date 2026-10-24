@@ -1,4 +1,4 @@
-/* atlifm example native plugin using C ABI version 1
+/* atlifm example native plugin using c abi version 1
  *
  * build instructions:
  * compile this file as a shared library targeting atlifm core headers
@@ -8,13 +8,13 @@
  * copy the compiled hello.so library into the user plugins directory inside atlifm config folder
  *
  * features demonstrated by this plugin:
- * 1. hello_banner custom menu action inside plugins menu bound to Ctrl+Alt+H
+ * 1. hello_banner custom menu action inside plugins menu bound to ctrl+alt+h
  * 2. properties action override returning zero which triggers fallback to default properties dialog
  * 3. custom text preview renderer for hello files showing first few lines
  * 4. startup lifecycle hook logging current working directory
  *
  * log destination:
- * logs are appended to temporary file atlifm_hello.log or path from ATLIFM_PLUGIN_LOG environment variable
+ * logs are appended to temporary file atlifm_hello.log or path from atlifm_plugin_log environment variable
  */
 #include "atlifm-plugin-api.h"
 

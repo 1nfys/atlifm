@@ -17,7 +17,7 @@ class EngineTabBar : public QWidget {
     Q_OBJECT
 
 public:
-    // обычная высота шапки вкладок, компакт при низком окне (см. MainWindow::resizeEvent)
+    // обычная высота шапки вкладок, компакт при низком окне (см. mainwindow::resizeevent)
     static constexpr int kNormalHeight = 30;
 
     explicit EngineTabBar(QWidget* parent = nullptr);

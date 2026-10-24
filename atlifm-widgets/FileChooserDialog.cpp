@@ -23,7 +23,7 @@ void FileChooserDialog::setupUi() {
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // верх: в режиме Save имя файла; путь остаётся внизу в адресной строке
+    // верх: в режиме save имя файла; путь остаётся внизу в адресной строке
     m_nameBar = new QWidget(this);
     m_nameBar->setObjectName(QStringLiteral("chooserNameBar"));
     m_nameBar->setAttribute(Qt::WA_StyledBackground, true);
@@ -35,7 +35,7 @@ void FileChooserDialog::setupUi() {
     m_nameLabel->setFont(Theme::getMonospaceFont(9, QFont::Bold));
     nameLayout->addWidget(m_nameLabel, 0, Qt::AlignVCenter);
 
-    // поле имени только для режима сохранения (PortalService SaveFile)
+    // поле имени только для режима сохранения (portalservice savefile)
     m_nameEdit = new QLineEdit(m_nameBar);
     m_nameEdit->setObjectName(QStringLiteral("chooserNameEdit"));
     m_nameEdit->setFont(Theme::getMonospaceFont(9));
@@ -62,7 +62,7 @@ void FileChooserDialog::setupUi() {
 
     m_miller = new MillerViewContainer(m_bodySplitter);
     m_miller->setMinimumWidth(260);
-    // двойной клик/Enter по файлу даёт сигнал выбора, а не запуск приложением
+    // двойной клик/enter по файлу даёт сигнал выбора, а не запуск приложением
     m_miller->setFileChooseMode(true);
 
     m_bodySplitter->addWidget(m_bookmarksBar);
@@ -77,15 +77,15 @@ void FileChooserDialog::setupUi() {
             [this](const std::filesystem::path& dir) { onDirectoryChanged(dir); });
     connect(m_bookmarksBar, &BookmarksBar::navigateRequested, this,
             [this](const std::filesystem::path& dir) { setDirectory(dir); });
-    // двойной клик/Enter по файлу в колонках выбор файла
+    // двойной клик/enter по файлу в колонках выбор файла
     connect(m_miller, &MillerViewContainer::fileChosenRequested, this,
             [this](const std::filesystem::path& path) { onFileActivated(path); });
-    // Ctrl+D «Bookmark» внутри диалога в ту же панель закладок
+    // ctrl+d «bookmark» внутри диалога в ту же панель закладок
     connect(m_miller, &MillerViewContainer::bookmarkAdded, this,
             [this](const std::filesystem::path& path) {
                 if (m_bookmarksBar) m_bookmarksBar->addBookmark(path);
             });
-    // DnD на панель закладок как в основном окне
+    // dnd на панель закладок как в основном окне
     connect(m_bookmarksBar, &BookmarksBar::filesDropped, this,
             [this](const auto& srcs, const auto& dest, auto act, auto mods) {
                 if (m_miller) Dnd::DragDropHandler::handleDrop(srcs, dest, act, mods, m_miller);
@@ -98,7 +98,7 @@ void FileChooserDialog::setupUi() {
         if (m_miller) m_miller->refresh();
     });
 
-    // низ: адресная строка, под ней кнопки Cancel/Open
+    // низ: адресная строка, под ней кнопки cancel/open
     m_statusBar = new TuiStatusBar(this);
     connect(m_statusBar, &TuiStatusBar::pathEntered, this,
             [this](const std::filesystem::path& dir) { setDirectory(dir); });
@@ -118,7 +118,7 @@ void FileChooserDialog::setupUi() {
     connect(m_miller, &MillerViewContainer::sudoModeChanged, this, [this](bool isSudo) {
         if (m_statusBar) m_statusBar->setSudoBadge(isSudo);
     });
-    // фильтр из колонок (Ctrl+F или набор текста) в статусбар диалога
+    // фильтр из колонок (ctrl+f или набор текста) в статусбар диалога
     connect(m_miller, &MillerViewContainer::filterTriggered, this, [this]() {
         if (m_statusBar) m_statusBar->activateFilter();
     });
@@ -151,12 +151,12 @@ void FileChooserDialog::setupUi() {
     actionLayout->addWidget(m_openBtn, 0, Qt::AlignVCenter);
     mainLayout->addWidget(m_actionBar);
 
-    // Esc закрывает диалог из любого места, в т.ч. когда фокус в колонках
+    // esc закрывает диалог из любого места, в т.ч. когда фокус в колонках
     auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     esc->setContext(Qt::WidgetWithChildrenShortcut);
     connect(esc, &QShortcut::activated, this, [this]() { emit closeRequested(); });
 
-    // Ctrl+L / Alt+D / F4 ввод пути в нижнюю адресную строку, контекст WidgetWithChildren
+    // ctrl+l / alt+d / f4 ввод пути в нижнюю адресную строку, контекст widgetwithchildren
     // перекрывает шорткаты главного окна, пока фокус внутри диалога
     const QList<QKeySequence> pathKeys{QKeySequence(QStringLiteral("Ctrl+L")),
                                        QKeySequence(QStringLiteral("Alt+D")),
@@ -178,7 +178,7 @@ void FileChooserDialog::setDirectory(const std::filesystem::path& dir) {
     if (!std::filesystem::is_directory(dir, ec) || ec) return;
 
     m_miller->setDirectory(dir);
-    // Miller эмитит directoryChanged (→ onDirectoryChanged), но для пустого пути или ранних вызовов подстраховка
+    // miller эмитит directorychanged и ondirectorychanged, но для пустого пути или ранних вызовов подстраховка
     onDirectoryChanged(m_miller->currentDirectory());
 }
 
@@ -199,7 +199,7 @@ std::filesystem::path FileChooserDialog::selectedPath() const {
 QStringList FileChooserDialog::selectedFilePaths() const {
     QStringList out;
     if (!m_miller) return out;
-    // явный мультивыбор (Space, Ctrl+клик) → выбранные файлы, иначе текущий
+    // явный мультивыбор (space, ctrl+клик) и выбранные файлы, иначе текущий
     for (const auto& p : m_miller->selectedPaths()) {
         std::error_code ec;
         if (std::filesystem::is_directory(p, ec) && !ec) continue;
@@ -255,7 +255,7 @@ void FileChooserDialog::onDirectoryChanged(const std::filesystem::path& dir) {
 void FileChooserDialog::onFileActivated(const std::filesystem::path& path) {
     if (m_directoryMode) return; // в режиме каталогов файлы не выбираются
     if (m_saveMode) {
-        // двойной клик/Enter по файлу в режиме сохранения подставляет имя
+        // двойной клик/enter по файлу в режиме сохранения подставляет имя
         if (m_nameEdit) {
             m_nameEdit->setText(QString::fromUtf8(path.filename().c_str()));
             m_nameEdit->setFocus();
@@ -356,7 +356,7 @@ void FileChooserDialog::updateTheme() {
         )").arg(Base().name(), InputFg().name(), InputBorder().name(), InputFocusBorder().name()));
     }
     if (m_openBtn) {
-        // метрики Open идентичны Cancel (border 1px + padding 2px 14px), иначе кнопки разного размера
+        // метрики open идентичны cancel (border 1px + padding 2px 14px), иначе кнопки разного размера
         m_openBtn->setStyleSheet(QString(R"(
             QPushButton {
                 background-color: %1;

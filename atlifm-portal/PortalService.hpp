@@ -23,7 +23,7 @@ class FileChooserDialog;
 
 namespace Portal {
 
-// org.freedesktop.impl.portal.Request это объект на пути handle:
+// org.freedesktop.impl.portal.request это объект на пути handle:
 // close вызывает фронтенд, проверяем отправителя; объект регистрируется напрямую, без адаптера
 class PortalRequest : public QObject, protected QDBusContext {
     Q_OBJECT
@@ -39,11 +39,11 @@ public slots:
     void Close();
 };
 
-// org.freedesktop.impl.portal.FileChooser: openfile/savefile, ответ отдаётся
-// отложенно (setDelayedReply), response 0 это выбрано (results.uris), 1 отмена, 2 ошибка
+// org.freedesktop.impl.portal.filechooser: openfile/savefile, ответ отдаётся
+// отложенно (setdelayedreply), response 0 это выбрано (results.uris), 1 отмена, 2 ошибка
 // адаптер не используется: qt перекладывает qdbuscontext на parent адаптера,
 // а контекст нужен у самого регистрируемого объекта
-// (qdbuscontext.cpp: QDBusContextPrivate::set)
+// (qdbuscontext.cpp: qdbuscontextprivate::set)
 class PortalService : public QObject, protected QDBusContext {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.freedesktop.impl.portal.FileChooser")
@@ -75,7 +75,7 @@ private:
         QPointer<QWidget> window;
         QPointer<Widgets::FileChooserDialog> page;
         QPointer<PortalRequest> request;
-        QPointer<QWindow> foreignParent; // родитель X11 из parent_window (S5)
+        QPointer<QWindow> foreignParent; // родитель x11 из parent_window (s5)
     };
 
     void handleCall(const QDBusMessage& call, const QDBusObjectPath& handle,

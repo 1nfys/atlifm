@@ -48,7 +48,7 @@ public:
 
     void previewPath(const std::filesystem::path& path);
     void clearPreview();
-    // фоновая предзагрузка соседних видео/PDF; не меняет текущую страницу
+    // фоновая предзагрузка соседних видео/pdf; не меняет текущую страницу
     void prefetchPath(const std::filesystem::path& path);
 
     bool archivePageActive() const;
@@ -70,12 +70,12 @@ signals:
     void propertiesRequested(const std::filesystem::path& path);
     void archiveSelectionInteractionStarted();
     void messageRequested(const QString& message);
-    // Open With… из меню папки в превью, полноразмерный диалог оверлеем в MainWindow
+    // open with… из меню папки в превью, полноразмерный диалог оверлеем в mainwindow
     void openWithDialogRequested(const std::filesystem::path& path);
-    // Extract In… из меню папки в превью, архив фиксирован, каталог назначения выбирается оверлеем в MainWindow
+    // extract in… из меню папки в превью, архив фиксирован, каталог назначения выбирается оверлеем в mainwindow
     void extractInRequested(const std::filesystem::path& archivePath);
     // plugins из меню папки в превью, target это элемент под меню (пустое место
-    // значит сам каталог), исполнение в MillerViewContainer (TuiOutputOverlay + refresh)
+    // значит сам каталог), исполнение в millerviewcontainer (tuioutputoverlay + refresh)
     void pluginRunRequested(const QString& pluginId,
                             const std::filesystem::path& target,
                             const std::filesystem::path& cwd);
@@ -104,7 +104,7 @@ private:
     };
 
     void setupUi();
-    // skipPlugin=true: принудительно встроенный предпросмотр после неудачного плагина, без зацикливания
+    // skipplugin=true: принудительно встроенный предпросмотр после неудачного плагина, без зацикливания
     void loadPathNow(const std::filesystem::path& path, bool skipPlugin = false);
 
     QStackedWidget* m_stackedWidget{nullptr};
@@ -136,7 +136,7 @@ private:
     ArchiveTreeWidget* m_archiveTree{nullptr};
     Models::ArchiveModel* m_archiveModel{nullptr};
 
-    // PDF: постраничный просмотр, страницы рендерятся по мере прокрутки
+    // pdf: постраничный просмотр, страницы рендерятся по мере прокрутки
     DocumentViewer* m_documentViewer{nullptr};
     std::filesystem::path m_documentPath;
     std::shared_ptr<std::atomic_bool> m_documentCancel;
@@ -165,7 +165,7 @@ private:
                                int64_t mtimeSec, int64_t mtimeNsec, uintmax_t fileSize,
                                const QImage& img, const QSize& originalSize, const QString& info);
 
-    // состояние воркера для асинхронной загрузки (shared_ptr, чтобы фоновые воркеры безопасно переживали PreviewPane)
+    // состояние воркера для асинхронной загрузки (shared_ptr, чтобы фоновые воркеры безопасно переживали previewpane)
     std::filesystem::path m_activePath;
     int64_t m_activeMtimeSec{0};
     int64_t m_activeMtimeNsec{0};
@@ -173,14 +173,14 @@ private:
     std::vector<CachedImageEntry> m_imageCache;
     std::shared_ptr<std::atomic<uint64_t>> m_currentJobId{std::make_shared<std::atomic<uint64_t>>(0)};
 
-    // debounce быстрых смен выделения (ховер DnD, резина, стрелки): грузим только
+    // debounce быстрых смен выделения (ховер dnd, резина, стрелки): грузим только
     // устоявшийся путь, иначе рваные переключения страниц дают моргание
     QTimer* m_previewDebounce{nullptr};
     std::filesystem::path m_pendingPath;
     bool m_hasPending{false};
     bool m_pendingClear{false};
 
-    // видео/PDF: до двух фоновых предзагрузок соседних элементов
+    // видео/pdf: до двух фоновых предзагрузок соседних элементов
     QSet<QString> m_prefetchInFlight;
 };
 

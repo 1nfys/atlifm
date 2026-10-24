@@ -280,7 +280,7 @@ inline Plugin overrideFor(const QString& actionId,
     const QString id = actionId.trimmed().toLower();
     if (!isValidActionId(id) || isProtectedActionId(id)) return Plugin{};
     for (const Plugin& p : load()) {
-        if (p.native) continue; // override в .so обслуживает NativePluginHost
+        if (p.native) continue; // override в .so обслуживает nativepluginhost
         if (!p.overrides.contains(id)) continue;
         if (!selection.empty() && !appliesToSelection(p, selection)) continue;
         return p;
@@ -290,7 +290,7 @@ inline Plugin overrideFor(const QString& actionId,
 
 inline Plugin previewPluginFor(const std::filesystem::path& path) {
     for (const Plugin& p : load()) {
-        if (p.native) continue; // превью в .so обслуживает NativePluginHost
+        if (p.native) continue; // превью в .so обслуживает nativepluginhost
         if (!p.isPreview && p.type != QLatin1String("preview")) continue;
         if (matches(p, path, false)) return p;
     }
@@ -366,7 +366,7 @@ inline bool spawnDetached(const Plugin& plugin, const QStringList& paths,
 inline void triggerHook(const QString& eventName, const QStringList& paths, const QString& cwd) {
     const QString ev = eventName.trimmed().toLower();
     for (const Plugin& p : load()) {
-        if (p.native) continue; // hooks в .so обслуживает NativePluginHost
+        if (p.native) continue; // hooks в .so обслуживает nativepluginhost
         for (const QString& h : p.hooks) {
             if (h.trimmed().toLower() == ev) {
                 QString err;

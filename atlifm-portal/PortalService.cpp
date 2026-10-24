@@ -26,7 +26,7 @@ namespace Portal {
 
 namespace {
 
-// "ay" из options (current_folder/current_file) это байтовая строка с NUL в конце
+// "ay" из options (current_folder/current_file) это байтовая строка с nul в конце
 QString stringFromVariant(const QVariant& value) {
     if (!value.isValid()) return {};
     const auto id = value.metaType().id();
@@ -78,9 +78,9 @@ QString initialSaveName(const QVariantMap& options) {
     return {};
 }
 
-// parent_window от фронтенда: "x11:0xHEX" | "wayland:HANDLE" | ""
+// parent_window от фронтенда: "x11:0xhex" | "wayland:handle" | ""
 // импорт хендла wayland средствами qt невозможен, на wayland пропускаем;
-// на x11 foreign QWindow делает диалог модальным к окну вызывающего (S5),
+// на x11 foreign qwindow делает диалог модальным к окну вызывающего (s5),
 // владельцем остаёмся мы, держим до конца сессии
 QWindow* foreignParentFrom(const QString& parentWindow) {
     if (!parentWindow.startsWith(QLatin1String("x11:"))) return nullptr;
@@ -200,7 +200,7 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
     }
 
     // tui диалог в отдельном frameless окне
-    // qt::Dialog вместо qt::Window: на wayland композитор держит такое
+    // qt::dialog вместо qt::window: на wayland композитор держит такое
     // окно плавающим по центру, а не тайлом
     using namespace Theme::Colors;
     auto* window = new QWidget(nullptr, Qt::Dialog | Qt::FramelessWindowHint);
@@ -221,7 +221,7 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
 
     std::filesystem::path start = resolveStartDirectory(options);
     // последний каталог переиспользуем только для того же вызывающего:
-    // иначе клиенты видели бы пути чатов друг друга (S7)
+    // иначе клиенты видели бы пути чатов друг друга (s7)
     const QString caller = call.service();
     if (start.empty() && !m_lastDirectory.isEmpty() && m_lastDirectoryCaller == caller)
         start = std::filesystem::path(m_lastDirectory.toStdString());
@@ -235,7 +235,7 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
 
     if (foreignParent) {
         // нативный handle создаём до show(): платформа применит
-        // WM_TRANSIENT_FOR при маппинге окна
+        // wm_transient_for при маппинге окна
         window->createWinId();
         if (auto* handle = window->windowHandle())
             handle->setTransientParent(foreignParent);

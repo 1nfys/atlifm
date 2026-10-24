@@ -100,16 +100,18 @@ TaskManager::TaskManager(QObject* parent)
     auto makePool = [this](int threads, const QString& name) {
         auto* pool = new QThreadPool(this);
         pool->setMaxThreadCount(threads);
+        pool->setStackSize(1024 * 1024);
+        pool->setExpiryTimeout(5000);
         pool->setObjectName(name);
         return pool;
     };
     // отдельные пулы чтобы плагины и приложение не делили одни потоки
-    m_ioPool = makePool(3, QStringLiteral("atlifm-io"));
+    m_ioPool = makePool(2, QStringLiteral("atlifm-io"));
     // листинг файлов отдельно от копирования иначе навигация зависнет
-    m_listingPool = makePool(4, QStringLiteral("atlifm-listing"));
-    m_previewPool = makePool(2, QStringLiteral("atlifm-preview"));
-    m_searchPool = makePool(2, QStringLiteral("atlifm-search"));
-    m_pluginPool = makePool(2, QStringLiteral("atlifm-plugin"));
+    m_listingPool = makePool(2, QStringLiteral("atlifm-listing"));
+    m_previewPool = makePool(1, QStringLiteral("atlifm-preview"));
+    m_searchPool = makePool(1, QStringLiteral("atlifm-search"));
+    m_pluginPool = makePool(1, QStringLiteral("atlifm-plugin"));
 }
 
 TaskManager::~TaskManager() {
@@ -334,4 +336,4 @@ void TaskManager::trimHistory() {
     m_order = std::move(kept);
 }
 
-} // namespace Core::Tasks
+} // namespace core::tasks

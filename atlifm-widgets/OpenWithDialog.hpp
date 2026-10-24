@@ -13,9 +13,9 @@
 
 namespace Widgets {
 
-// Open With полноразмерный диалог в стиле TUI (не подменю, не отдельное окно):
-// поиск по приложениям, секции DEFAULT APP / OTHER APPS, «Always use for this file type», кнопки Cancel/Open
-// живёт оверлеем в центре MainWindow и запускает файл сам
+// open with полноразмерный диалог в стиле tui (не подменю, не отдельное окно):
+// поиск по приложениям, секции default app / other apps, «always use for this file type», кнопки cancel/open
+// живёт оверлеем в центре mainwindow и запускает файл сам
 class OpenWithDialog : public QWidget {
     Q_OBJECT
 

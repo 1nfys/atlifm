@@ -1,4 +1,5 @@
 #include "ArchiveTreeWidget.hpp"
+#include "StatusBar.hpp"
 #include "TuiInputPopup.hpp"
 #include "../atlifm-core/Icons.hpp"
 #include "../atlifm-dnd/DragDropHandler.hpp"
@@ -173,7 +174,7 @@ std::unique_ptr<ArchiveNode> buildTree(const std::vector<Core::XdgUtils::Archive
                 child->modified = entry.modified;
                 child->hasActualEntry = true;
                 child->memberPath = entry.path;
-                // tar и zip хранят каталоги с завершающим слешем а extractArchiveEntries ждет имя записи без него
+                // tar и zip хранят каталоги с завершающим слешем а extractarchiveentries ждет имя записи без него
                 if (child->isDir) {
                     while (child->memberPath.endsWith(QLatin1Char('/')) ||
                            child->memberPath.endsWith(QLatin1Char('\\'))) {
@@ -785,7 +786,7 @@ bool ArchiveTreeWidget::extractToCache(const QStringList& members, const QString
     return !outRealPaths.empty();
 }
 
-void ArchiveTreeWidget::startDrag(Qt::DropActions /*supportedActions*/) {
+void ArchiveTreeWidget::startDrag(Qt::DropActions /*supportedactions*/) {
     if (m_extracting) {
         emit messageRequested(QStringLiteral("Extraction in progress"));
         return;
@@ -1153,6 +1154,47 @@ void ArchiveTreeWidget::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
+    if (k == Qt::Key_Left) {
+        emit selectionInteractionStarted();
+        QTreeWidgetItem* cur = currentItem();
+        QTreeWidgetItem* root = topLevelItemCount() > 0 ? topLevelItem(0) : nullptr;
+        if (!cur || cur == root) {
+            emit leaveArchiveRequested();
+            event->accept();
+            return;
+        }
+        if (cur->isExpanded() && cur->childCount() > 0) {
+            cur->setExpanded(false);
+            event->accept();
+            return;
+        }
+        if (cur->parent() && cur->parent() != root) {
+            setCurrentItem(cur->parent(), 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            event->accept();
+            return;
+        }
+        // верхний уровень архива при свернутом элементе или файле выходит из архива
+        emit leaveArchiveRequested();
+        event->accept();
+        return;
+    }
+    if (k == Qt::Key_Right) {
+        emit selectionInteractionStarted();
+        QTreeWidgetItem* cur = currentItem();
+        if (cur) {
+            if (cur->childCount() > 0) {
+                if (!cur->isExpanded()) {
+                    cur->setExpanded(true);
+                } else if (cur->child(0)) {
+                    setCurrentItem(cur->child(0), 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                }
+            } else {
+                activateItem(cur);
+            }
+            event->accept();
+            return;
+        }
+    }
     if (k == Qt::Key_Return || k == Qt::Key_Enter) {
         activateItem(currentItem());
         return;
@@ -1272,4 +1314,4 @@ void ArchiveTreeWidget::showArchiveMenu(const QPoint& pos) {
     menu->popup(viewport()->mapToGlobal(pos));
 }
 
-} // namespace Widgets
+} // namespace widgets

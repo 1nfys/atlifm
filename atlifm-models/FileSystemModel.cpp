@@ -302,7 +302,7 @@ void FileSystemModel::refresh() {
     m_dirScanPending = true;
     emit loadingStarted();
 
-    // без join в потоке gui: старый скан сам выйдет по несовпадению scanId,
+    // без join в потоке gui: старый скан сам выйдет по несовпадению scanid,
     // воркер получает разделяемое состояние и не трогает модель небезопасно
     QPointer<FileSystemModel> self(this);
     std::filesystem::path dir = m_currentDir;
@@ -331,7 +331,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
 
     std::error_code ec;
     bool isDir = std::filesystem::exists(dirPath, ec) && std::filesystem::is_directory(dirPath, ec);
-    // при EACCES у root родителя stat не подтверждает каталог, идём
+    // при eacces у root родителя stat не подтверждает каталог, идём
     // к кэшу sudo листинга или фолбэку через find ниже
     const bool statDenied = (ec == std::errc::permission_denied);
     if (!isDir && !statDenied) {
@@ -389,11 +389,11 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
         std::string fname = item.path.filename().string();
         item.isHidden = (!fname.empty() && fname.front() == '.');
 
-        // Панель превью рисует только иконку и имя, поэтому не делаем лишний
-        // statx и не форматируем размер, права и дату. Так листинг больших
+        // панель превью рисует только иконку и имя, поэтому не делаем лишний
+        // statx и не форматируем размер, права и дату. так листинг больших
         // папок заметно ускоряется.
         if (lightweight) {
-            // Бит исполнения уже есть в symlink_status, поэтому сохраняем
+            // бит исполнения уже есть в symlink_status, поэтому сохраняем
             // иконку без лишнего stat.
             using perms = std::filesystem::perms;
             item.isExecutable = !item.isDirectory &&
@@ -417,7 +417,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
             item.sizeFormatted = "";
         }
 
-        // дата изменения через statx с fallback на mtime, формат %d.%m %H:%M
+        // дата изменения через statx с fallback на mtime, формат %d.%m %h:%m
         time_t timestamp = 0;
         struct statx stx;
         if (statx(AT_FDCWD, item.path.c_str(), AT_SYMLINK_NOFOLLOW, STATX_MTIME, &stx) == 0) {
@@ -444,7 +444,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
             item.modifiedDate = QString::fromUtf8(buf);
         }
 
-        // иконка Nerd Font (передаём подсказку isExecutable, чтобы пропустить лишний вызов stat)
+        // иконка nerd font (передаём подсказку isexecutable, чтобы пропустить лишний вызов stat)
         auto iconInfo = Icons::getIcon(item.path, item.isDirectory, item.isSymlink, false, item.isExecutable);
         item.iconGlyph = iconInfo.glyph;
         item.iconColor = iconInfo.color;
@@ -453,7 +453,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
     }
 
     if (gathered.empty()) {
-        // листинг из общего кэша XdgUtils, добытого одним вызовом root:
+        // листинг из общего кэша xdgutils, добытого одним вызовом root:
         // pkexec уже отработал, второй диалог пароля запрещён;
         // даже пустой вывод валиден, фолбэк не запускаем
         QString sudoOut;
@@ -467,7 +467,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
             QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
             env.insert("LC_ALL", "C.UTF-8");
             proc.setProcessEnvironment(env);
-            // разделитель записей NUL: имя файла может содержать '\n',
+            // разделитель записей nul: имя файла может содержать '\n',
             // и с '\n' оно инжектировало бы поддельные записи, '\0' в имени невозможен
             const QStringList findArgv = Core::XdgUtils::rootArgs(
                 {"find", QString::fromUtf8(dirPath.c_str()), "-mindepth", "1", "-maxdepth", "1", "-printf", findPrintfFormat()});
@@ -506,7 +506,7 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
 }
 
 // разбор вывода find с printf формат общий для обычного скана и root
-// разделитель NUL против переводов строк в именах
+// разделитель nul против переводов строк в именах
 // false если скан устарел
 bool FileSystemModel::parseFindListing(const QString& out, const std::filesystem::path& dirPath,
                                        uint64_t scanId, const std::shared_ptr<std::atomic<uint64_t>>& scanCounter,
@@ -557,19 +557,19 @@ bool FileSystemModel::parseFindListing(const QString& out, const std::filesystem
     return true;
 }
 
-// сырой вывод авторизованного find кладём в общий кэш XdgUtils,
+// сырой вывод авторизованного find кладём в общий кэш xdgutils,
 // следующий скан каталога получит его без повторного вызова
 void FileSystemModel::provideSudoListing(const std::filesystem::path& dir, const QString& findOutput) {
     Core::XdgUtils::provideSudoListing(dir, findOutput);
 }
 
 // \\0 в литерале это backslash+ноль, find превращает его в разделитель
-// записей NUL; реальный байт NUL в argv недопустим, execve обрезает аргумент
+// записей nul; реальный байт nul в argv недопустим, execve обрезает аргумент
 QString FileSystemModel::findPrintfFormat() {
     return QStringLiteral("%y\t%s\t%T@\t%m\t%f\\0");
 }
 
-// разбор размера: "10M", "500K", "1.5G", "1024"
+// разбор размера: "10m", "500k", "1.5g", "1024"
 static uintmax_t parseSizeBytes(const QString& str) {
     QString s = str.trimmed().toUpper();
     uintmax_t multiplier = 1;
@@ -629,8 +629,8 @@ struct SearchQuery {
         DirOnly,       // "dir:", "folder:", "/"
         FileOnly,      // "file:"
         Extension,     // "ext:png,jpg"
-        SizeGreater,   // ">10M", "size:>10M"
-        SizeLess,      // "<500K", "size:<500K"
+        SizeGreater,   // ">10m", "size:>10m"
+        SizeLess,      // "<500k", "size:<500k"
         ExactPhrase,   // "\"exact phrase\""
         Prefix,        // "^prefix"
         Suffix,        // "suffix$"
@@ -664,7 +664,7 @@ struct SearchQuery {
         }
         q.isEmpty = false;
 
-        // разбиение по " | " или " OR "
+        // разбиение по " | " или " or "
         static const QRegularExpression orSplitRx(R"(\s+(?:\||OR)\s+)", QRegularExpression::CaseInsensitiveOption);
         QStringList groupStrings = trimmed.split(orSplitRx);
 
@@ -937,7 +937,7 @@ void FileSystemModel::applyFilterAndSort() {
                     return m_sortAscending ? (a.item.modifiedTimestamp < b.item.modifiedTimestamp)
                                            : (a.item.modifiedTimestamp > b.item.modifiedTimestamp);
                 }
-            } else if (m_sortMode == 3) { // Type (расширение, регистронезависимо)
+            } else if (m_sortMode == 3) { // type (расширение, регистронезависимо)
                 const int tcmp = QString::compare(sortTypeOf(a.item), sortTypeOf(b.item),
                                                   Qt::CaseInsensitive);
                 if (tcmp != 0) {
@@ -979,7 +979,7 @@ QString FileSystemModel::sortTypeOf(const FileItem& item) const {
 }
 
 // du по виртуальным фс ядра бессмыслен (/proc/kcore ~128 тиб), сортируем как 0;
-// паритет с PropertiesDialog::isVirtualKernelFs
+// паритет с propertiesdialog::isvirtualkernelfs
 static bool isVirtualKernelFsPath(const QString& path) {
     const QStorageInfo si(path);
     if (!si.isValid()) return false;
@@ -1016,7 +1016,7 @@ void FileSystemModel::ensureDirSizesForSort() {
                 if (isVirtualKernelFsPath(toScan[i])) continue;
                 args << toScan[i];
             }
-            if (args.size() == 4) continue; // в чанке только виртуальные ФС
+            if (args.size() == 4) continue; // в чанке только виртуальные фс
             QProcess proc;
             proc.start(QStringLiteral("du"), args);
             if (!proc.waitForStarted(2000)) continue;
@@ -1453,14 +1453,14 @@ void FileSystemModel::setFilter(const QString& filter) {
     m_filter = filter;
 
     if (filter.trimmed().isEmpty()) {
-        // старый фоновый скан сам отвалится по scanId, join не нужен
+        // старый фоновый скан сам отвалится по scanid, join не нужен
         ++(*m_scanCounter);
         applyFilterAndSort();
-        // отменённый скан не доставит результат, иначе UI навсегда оставался бы в loading
+        // отменённый скан не доставит результат, иначе ui навсегда оставался бы в loading
         if (m_isLoading.exchange(false)) {
             emit loadingFinished(static_cast<int>(m_displayedItems.size()));
         }
-        // m_allItems мог остаться от прошлого каталога, перечитываем текущий
+        // m_allitems мог остаться от прошлого каталога, перечитываем текущий
         if (m_dirScanPending) {
             refresh();
         }
@@ -1550,7 +1550,7 @@ int FileSystemModel::findRowByPath(const std::filesystem::path& path) const {
         }
     }
 
-    // 5. проверка эквивалентности средствами ФС (только если цель есть на диске, чтобы не делать O(N) падающих вызовов stat)
+    // 5. проверка эквивалентности средствами фс (только если цель есть на диске, чтобы не делать o(n) падающих вызовов stat)
     std::error_code ec;
     if (std::filesystem::exists(path, ec)) {
         for (size_t i = 0; i < m_displayedItems.size(); ++i) {

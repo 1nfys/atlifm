@@ -87,11 +87,11 @@ public:
         const QString glyph = index.data(Qt::UserRole + 3).toString();
         if (!glyph.isEmpty() && r.width() < 78) {
             // узкая панель: рисуем только глиф по центру строки
-            // центрируются чернила глифа по tightBoundingRect, т.к. глифы Nerd шире своей ячейки и прижаты к верху
+            // центрируются чернила глифа по tightboundingrect, т.к. глифы nerd шире своей ячейки и прижаты к верху
             painter->setFont(Theme::getMonospaceFont(12));
             const QFontMetricsF fm(painter->font());
             const QRectF ink = fm.tightBoundingRect(glyph);
-            // центр через QRectF: QRect::center() на чётной ширине округляет вниз, иконки уезжали на 1px
+            // центр через qrectf: qrect::center() на чётной ширине округляет вниз, иконки уезжали на 1px
             const QPointF cellCenter = QRectF(r).center();
             painter->drawText(QPointF(cellCenter.x() - ink.center().x(),
                                       cellCenter.y() - ink.center().y()), glyph);
@@ -240,7 +240,7 @@ void BookmarksBar::setupUi() {
 
     auto actProps = menu.addAction("\U000F02FD Properties\tAlt+Enter");
     connect(actProps, &QAction::triggered, this, [this, p]() {
-        // свойства с блоком Disk Usage открывает MillerViewContainer как внутреннее окно в центре
+        // свойства с блоком disk usage открывает millerviewcontainer как внутреннее окно в центре
         emit propertiesRequested(p);
     });
 
@@ -402,7 +402,7 @@ void BookmarksBar::populateItems() {
 
 void BookmarksBar::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
-    // фон как у списков файлов (Base), сайдбар это крайняя колонка Miller, а не отдельная панель
+    // фон как у списков файлов (base), сайдбар это крайняя колонка miller, а не отдельная панель
     painter.fillRect(rect(), Theme::Colors::Base());
 }
 
@@ -432,7 +432,7 @@ void BookmarksBar::onItemClicked(QListWidgetItem* item) {
 }
 
 void BookmarksBar::onCustomContextMenu(const QPoint& /*pos*/) {
-    // обрабатывается в BookmarksListWidget::mousePressEvent через itemRightClicked
+    // обрабатывается в bookmarkslistwidget::mousepressevent через itemrightclicked
 }
 
 void BookmarksBar::onAddCurrentClicked() {

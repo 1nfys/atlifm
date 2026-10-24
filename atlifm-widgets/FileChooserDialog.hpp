@@ -17,9 +17,9 @@ class BookmarksBar;
 class MillerViewContainer;
 class TuiStatusBar;
 
-// «Open Files» диалог выбора файла в полном дизайне основного окна: панель закладок + 3 колонки Miller,
-// сверху в режиме Save строка имени, снизу адресная строка как в основном окне.
-// Живёт оверлеем в MainWindow и отдельным окном в PortalService
+// «open files» диалог выбора файла в полном дизайне основного окна: панель закладок + 3 колонки miller,
+// сверху в режиме save строка имени, снизу адресная строка как в основном окне.
+// живёт оверлеем в mainwindow и отдельным окном в portalservice
 class FileChooserDialog : public QWidget {
     Q_OBJECT
 
@@ -33,11 +33,11 @@ public:
     std::filesystem::path selectedPath() const;
     void updateTheme();
 
-    // режимы портального backend'а XDG (системный «выбрать файл» из браузера, см. PortalService)
+    // режимы портального backend'а xdg (системный «выбрать файл» из браузера, см. portalservice)
     void setMultipleSelectionEnabled(bool enabled);
     void setDirectoryMode(bool enabled);
     void setSaveMode(bool enabled, const QString& initialName = QString());
-    // надпись главной кнопки (портал accept_label, «Extract In» задаёт Extract)
+    // надпись главной кнопки (портал accept_label, «extract in» задаёт extract)
     void setAcceptLabel(const QString& label);
     // все выделенные файлы (для multiple), без выделения текущий
     QStringList selectedFilePaths() const;
@@ -55,14 +55,14 @@ protected:
 private:
     void setupUi();
     void onDirectoryChanged(const std::filesystem::path& dir);
-    // двойной клик/Enter по файлу в колонках: Save подставляет имя, Open(multiple) filesChosen, одиночный Open fileChosen
+    // двойной клик/enter по файлу в колонках: save подставляет имя, open(multiple) fileschosen, одиночный open filechosen
     void onFileActivated(const std::filesystem::path& path);
     void acceptCurrent();
 
     QSplitter* m_bodySplitter{nullptr};
     BookmarksBar* m_bookmarksBar{nullptr};
     MillerViewContainer* m_miller{nullptr};
-    // нижняя адресная строка как в основном окне, тот же TuiStatusBar: путь, фильтр, счётчики, диск, бейдж sudo
+    // нижняя адресная строка как в основном окне, тот же tuistatusbar: путь, фильтр, счётчики, диск, бейдж sudo
     TuiStatusBar* m_statusBar{nullptr};
     // верхняя строка имени только в режиме сохранения; путь остаётся внизу в статусбаре
     QWidget* m_nameBar{nullptr};
@@ -74,7 +74,7 @@ private:
     bool m_multiple{false};
     bool m_directoryMode{false};
     bool m_saveMode{false};
-    // надпись главной кнопки вне режима save (Open по умолчанию)
+    // надпись главной кнопки вне режима save (open по умолчанию)
     QString m_acceptLabel{QStringLiteral("Open")};
 };
 

@@ -15,23 +15,23 @@ class DragDropHandler {
 public:
     static constexpr const char* kMovePreferredMime = "application/x-atlifm-prefer-move";
 
-    // создаёт исходящий объект QDrag с правильными MIME типами и собственным визуальным бейджем
+    // создаёт исходящий объект qdrag с правильными mime типами и собственным визуальным бейджем
     static QDrag* createDrag(const std::vector<std::filesystem::path>& paths, QWidget* dragSource);
 
     static bool prefersMove(const QDropEvent* event);
     static Qt::DropAction effectiveAction(const QDropEvent* event);
     static void acceptDrag(QDropEvent* event);
 
-    // создаёт pixmap превью перетаскивания: тёмный бейдж терминала "📄 [X items selected]"
+    // создаёт pixmap превью перетаскивания: тёмный бейдж терминала "📄 [x items selected]"
     static QPixmap createDragPixmap(size_t itemCount, const QString& firstItemName);
 
-    // проверяет, что событие сброса содержит допустимый файл, URI, изображение или веб данные
+    // проверяет, что событие сброса содержит допустимый файл, uri, изображение или веб данные
     static bool canAcceptDrop(const QMimeData* mimeData);
 
-    // извлекает список локальных путей к файлам из QMimeData
+    // извлекает список локальных путей к файлам из qmimedata
     static std::vector<std::filesystem::path> extractPaths(const QMimeData* mimeData);
 
-    // обрабатывает любой сброс или вставку (локальные файлы, изображения из браузера и чатов, URI data:, удалённые URL http/https)
+    // обрабатывает любой сброс или вставку (локальные файлы, изображения из браузера и чатов, uri data:, удалённые url http/https)
     static bool handleMimeDrop(const QMimeData* mimeData,
                                const std::filesystem::path& targetDir,
                                Qt::DropAction proposedAction,

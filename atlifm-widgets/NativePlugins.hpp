@@ -33,7 +33,7 @@ public:
     void shutdownAll();
     void setWindow(MainWindow* window) { m_window = window; }
 
-    // манифесты действий для Core::Plugins::load (меню, биндинги, читшит)
+    // манифесты действий для core::plugins::load (меню, биндинги, читшит)
     std::vector<Core::Plugins::Plugin> manifests() const;
     QStringList overrideSummaries() const;
 
@@ -108,7 +108,7 @@ private:
         void (*shutdownFn)() {nullptr};
     };
 
-    // C ABI точки входа таблицы AtlifmHostApi
+    // c abi точки входа таблицы atlifmhostapi
     static const AtlifmHostApi& hostApi();
     static const char* apiVersion();
     static void apiOutputWrite(const char* text);
@@ -153,8 +153,8 @@ private:
     std::vector<OverrideRecord> m_overrides;
     std::vector<PreviewRecord> m_previews;
     std::vector<HookRecord> m_hooks;
-    // renderPreview идёт из рабочего потока: сериализует registry против
-    // shutdownAll, выгрузка .so не должна застать render в полёте
+    // renderpreview идёт из рабочего потока: сериализует registry против
+    // shutdownall, выгрузка .so не должна застать render в полёте
     mutable QMutex m_registryMutex;
 
     struct Session {

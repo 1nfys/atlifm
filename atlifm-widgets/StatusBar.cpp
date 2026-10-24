@@ -176,7 +176,7 @@ void TuiStatusBar::setupUi() {
     m_statsLabel->setAlignment(Qt::AlignCenter);
     m_layout->addWidget(m_statsLabel, 0, Qt::AlignVCenter | Qt::AlignRight);
 
-    // скрытая неиспользуемая метка диска, оставлена для сохранения ABI
+    // скрытая неиспользуемая метка диска, оставлена для сохранения abi
     m_diskLabel = new QLabel(this);
     m_diskLabel->hide();
 
@@ -350,15 +350,25 @@ bool TuiStatusBar::eventFilter(QObject* watched, QEvent* event) {
             return true;
         }
         if (key == Qt::Key_Return || key == Qt::Key_Enter) {
-            // enter подтверждаем вручную: QPushButton на enter кликает только
-            // для кнопок в QDialog, у кнопок промпта диалога нет
+            // ввод подтверждаем вручную так как кнопки вне диалога
             if (watched == m_promptInput) {
-                // обработает returnPressed
+                // обработает сигнал нажатия ввода
             } else if (watched == m_promptCancelBtn) {
                 finishInlinePrompt(0);
                 return true;
             } else {
                 finishInlinePrompt(1);
+                return true;
+            }
+        }
+        if (watched == m_promptInput) {
+            if (key == Qt::Key_Up || key == Qt::Key_Down ||
+                key == Qt::Key_PageUp || key == Qt::Key_PageDown) {
+                QPointer<QWidget> prev = m_prevFocusWidget;
+                finishInlinePrompt(0);
+                if (prev) {
+                    QCoreApplication::sendEvent(prev.data(), event);
+                }
                 return true;
             }
         }
@@ -525,7 +535,7 @@ void TuiStatusBar::setItemPerms(const QString& perms) {
         } else if (c == QLatin1Char('-')) {
             color = Theme::Colors::Surface2().name();
         } else {
-            // тип (d/l/c/b/p), exec (x) и suid/sticky (s/t/S/T)
+            // тип (d/l/c/b/p), exec (x) и suid/sticky (s/t/s/t)
             color = Theme::Colors::Accent().name();
         }
         html += QStringLiteral("<span style='color:%1'>%2</span>").arg(color, QString(c));
@@ -600,7 +610,7 @@ void TuiStatusBar::setTaskSummary(const QString& summary) {
 }
 
 // автоскрытие бейджа сообщения через 1.5 с, после инлайн промпта таймер
-// перезапускается (beginInlinePrompt останавливает его), иначе бейдж висит вечно
+// перезапускается (begininlineprompt останавливает его), иначе бейдж висит вечно
 void TuiStatusBar::scheduleMessageDismiss() {
     if (!m_messageTimer) {
         m_messageTimer = new QTimer(this);
@@ -740,6 +750,7 @@ void TuiStatusBar::beginInlinePrompt(bool hidePath) {
 }
 
 void TuiStatusBar::endInlinePrompt() {
+    m_promptIsPassword = false;
     m_promptInput->setEchoMode(QLineEdit::Normal);
     m_promptLabel->hide();
     m_promptInput->hide();
@@ -779,6 +790,7 @@ QString TuiStatusBar::askTextInline(const QString& label, const QString& initial
         return QString();
     }
     beginInlinePrompt(true);
+    m_promptIsPassword = isPassword;
     m_promptLabel->setText(label);
     m_promptLabel->setToolTip(label);
     m_promptLabel->show();
@@ -858,7 +870,7 @@ bool TuiStatusBar::askConfirmInline(const QString& title, const QString& message
         m_promptCancelBtn->setText(cancelText);
         m_promptCancelBtn->show();
     }
-    // фокус на кнопке Yes, чтобы Enter или Y подтверждали сразу
+    // фокус на кнопке yes, чтобы enter или y подтверждали сразу
     m_promptOkBtn->setFocus();
 
     QEventLoop loop;

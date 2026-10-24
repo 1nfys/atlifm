@@ -134,8 +134,8 @@ int TuiInputPopup::exec() {
     show();
     raise();
     activateWindow();
-    // возвращаем реальный результат QDialog (Accepted/Rejected), а не код QEventLoop:
-    // quit() всегда даёт 0 = Rejected, и все вводы «отменялись»
+    // возвращаем реальный результат qdialog (accepted/rejected), а не код qeventloop:
+    // quit() всегда даёт 0 = rejected, и все вводы «отменялись»
     int res = QDialog::Rejected;
     QEventLoop loop;
     connect(this, &QDialog::finished, &loop, [&](int r) {
@@ -199,7 +199,7 @@ QString TuiInputPopup::getText(QWidget* parent, const QString& title, const QStr
     return (result == QDialog::Accepted) ? dlg.text() : QString();
 }
 
-// TuiConfirmPopup
+// tuiconfirmpopup
 
 TuiConfirmPopup::TuiConfirmPopup(const QString& title, const QString& message,
                                  const QString& confirmText, const QString& cancelText,

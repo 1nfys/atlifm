@@ -26,16 +26,16 @@ public:
     explicit PropertiesDialog(const std::filesystem::path& path, QWidget* parent = nullptr);
     ~PropertiesDialog() override;
 
-    // встроенный режим: виджет живёт страницей внутри PreviewPane, без
-    // отдельного окна; Close/Esc → сигнал closeRequested
+    // встроенный режим: виджет живёт страницей внутри previewpane, без
+    // отдельного окна; close/esc и сигнал closerequested
     void setEmbedded(bool embedded);
     void setPath(const std::filesystem::path& p);
 
-    // компактные свойства (по умолчанию): без консоли Disk Usage, для
+    // компактные свойства (по умолчанию): без консоли disk usage, для
     // для каталогов в поле size считается только вес папки через du
-    // для корня диска/ФС (точки монтирования, напр. /, /home, /mnt/usb) и
-    // только для него показывается консоль Disk Usage с разбивкой по
-    // подпапкам и заполнением ФС автоматически, без отдельных клавиш
+    // для корня диска/фс (точки монтирования, напр. /, /home, /mnt/usb) и
+    // только для него показывается консоль disk usage с разбивкой по
+    // подпапкам и заполнением фс автоматически, без отдельных клавиш
     bool diskUsageVisible() const { return m_diskUsageShown; }
 
     int exec() override;
@@ -58,14 +58,14 @@ private:
     void runPathWeightProc(bool viaSudo);
     void stopPathWeightProc();
 
-    // Disk Usage классическая консоль внутри диалога (только каталоги):
+    // disk usage классическая консоль внутри диалога (только каталоги):
     // шапка файловой системы и таблица видны мгновенно а скан du идет в фоне
-    // течёт асинхронно (readyRead в поток GUI), таблица и полоса прогресса
-    // наполняются по ходу скана. Закрытые подпапки показываются «?» и
+    // течёт асинхронно (readyread в поток gui), таблица и полоса прогресса
+    // наполняются по ходу скана. закрытые подпапки показываются «?» и
     // измеряются последними ровно одним привилегированным вызовом на весь
     // скан: живой тикет sudo молча иначе один батч pkexec на все пути
     // без создания лишних диалогов пароля
-    // sudoers не создаются. Если pkexec недоступен или диалог отклонён, чип
+    // sudoers не создаются. если pkexec недоступен или диалог отклонён, чип
     // инлайн ввод пароля sudo проверяет пароль и делает тикет
     // а дальше продолжается скан без повторного запроса
     // полного скана после авторизации нет
@@ -109,23 +109,23 @@ private:
     QLabel* m_ownerLabel{nullptr};
 
     // компактные свойства: вес папки через du а счетчик заданий отсекает устаревшие ответы
-    // устаревшие сигналы при повторных setPath
-    bool m_diskUsageShown{false};         // путь корень диска/ФС: консоль видна
+    // устаревшие сигналы при повторных setpath
+    bool m_diskUsageShown{false};         // путь корень диска/фс: консоль видна
     std::atomic<uint64_t> m_weightJob{0};
     QProcess* m_weightProc{nullptr};
 
-    // Disk Usage: счётчик job отсекает устаревшие сигналы при повторных
-    // setPath/закрытии, процессы du/sudo убиваются при рестарте и разрушении
+    // disk usage: счётчик job отсекает устаревшие сигналы при повторных
+    // setpath/закрытии, процессы du/sudo убиваются при рестарте и разрушении
     QWidget* m_diskUsageGroup{nullptr};
     QTextEdit* m_diskConsole{nullptr};
 
     // инлайн строка статуса над консолью: чип «scanning» вплотную к
     // полосе прогресса; пока ждём пароль, плашка «needed sudo» встаёт на место
     // «scanning» (та же ширина), бар не сбрасывается, а замирает;
-    // поле пароля настоящее (QLineEdit), без попапов
+    // поле пароля настоящее (qlineedit), без попапов
     QWidget* m_diskStatusRow{nullptr};
     QLabel* m_diskScanChip{nullptr};      // scanning (плашка 13 знаков)
-    QLabel* m_diskBarLabel{nullptr};      // [████░░] NN% | … (замирает на needed sudo)
+    QLabel* m_diskBarLabel{nullptr};      // [████░░] nn% | … (замирает на needed sudo)
     QLabel* m_diskNeededChip{nullptr};    // needed sudo встаёт на место scanning
     QLabel* m_diskPasswordCaption{nullptr};
     QLineEdit* m_diskPasswordEdit{nullptr};
@@ -136,17 +136,17 @@ private:
 
     std::atomic<uint64_t> m_diskScanJob{0};
     QProcess* m_diskProc{nullptr};
-    QString m_diskBaseHtml;              // Filesystem/Mount/Capacity/Available (мгновенно)
-    QString m_diskRootClean;             // cleanPath текущего пути (сверка с выводом du)
+    QString m_diskBaseHtml;              // filesystem/mount/capacity/available (мгновенно)
+    QString m_diskRootClean;             // cleanpath текущего пути (сверка с выводом du)
     QSet<QString> m_diskChildren;        // подкаталоги первого уровня (для строк «?»)
-    QHash<QString, qint64> m_diskSizes;  // имя подкаталога → байты
+    QHash<QString, qint64> m_diskSizes;  // имя подкаталога и байты
     QSet<QString> m_diskResolved;        // имена, для которых размер получен
     QSet<QString> m_diskRestricted;      // ошибки доступа в текущей фазе (неполный размер)
     QSet<QString> m_diskMountChildren;   // дети точки монтирования на другой файловой системе которых du пропускает
     bool m_diskMountWaveDone{false};     // их поштучная волна уже запускалась
     QSet<QString> m_diskUnknown;         // финальные строки «?»
-    QSet<QString> m_diskProgressChildren; // дети из m_diskTotalDirs (одна ФС) только их считаем в прогрессе
-    QByteArray m_diskOutBuf;             // недособранные записи NUL du
+    QSet<QString> m_diskProgressChildren; // дети из m_disktotaldirs (одна фс) только их считаем в прогрессе
+    QByteArray m_diskOutBuf;             // недособранные записи nul du
     QString m_diskErrBuf;                // недособранные строки stderr du
     int m_diskDoneDirs{0};
     int m_diskTotalDirs{0};
@@ -165,12 +165,12 @@ private:
     bool m_diskParallelMode{false};
     QStringList m_diskParallelQueue;                 // оставшиеся подпапки
     QList<QProcess*> m_diskParallelProcs;            // активные du по подпапкам
-    QHash<QProcess*, QByteArray> m_diskParallelBufs; // раздельные буферы записей NUL
-    QHash<QProcess*, QString> m_diskParallelErrBufs; // stderr волны (Permission denied)
+    QHash<QProcess*, QByteArray> m_diskParallelBufs; // раздельные буферы записей nul
+    QHash<QProcess*, QString> m_diskParallelErrBufs; // stderr волны (permission denied)
 
-    // вторая волна (закрытые папки последними). Авторизация: живой
+    // вторая волна (закрытые папки последними). авторизация: живой
     // тикет sudo молча иначе один батч pkexec со всеми путями
-    // один системный диалог; отказ или нет полкита → поле инлайн пароля
+    // один системный диалог; отказ или нет полкита и поле инлайн пароля
     QStringList m_diskSudoQueue;
     int m_diskSudoQueueTotal{0};
     bool m_diskSudoQueueRunning{false};

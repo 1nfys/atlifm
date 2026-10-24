@@ -43,8 +43,8 @@
 
 namespace {
 
-// В тайлинговом WM размер окна задаёт композитор. Если приложение вызывает
-// resize() уже после show (сброс layout), Hyprland/Sway могут оставить окно
+// в тайлинговом wm размер окна задаёт композитор. если приложение вызывает
+// resize() уже после show (сброс layout), hyprland/sway могут оставить окно
 // отдельным прямоугольником вместо тайла а на плавающих wm сброс по прежнему
 // возвращает размер из theme.conf.
 bool compositorManagesWindowSize() {
@@ -66,8 +66,8 @@ namespace Widgets {
 
 MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent)
     : QMainWindow(parent) {
-    // плагины C++ (~/.config/atlifm/plugins/*.so) загружаются до первого обращения
-    // к Keybinds/меню: их действия участвуют в биндингах, подменю Plugins, override/hooks
+    // плагины c++ (~/.config/atlifm/plugins/*.so) загружаются до первого обращения
+    // к keybinds/меню: их действия участвуют в биндингах, подменю plugins, override/hooks
     NativePluginHost::instance().setWindow(this);
     NativePluginHost::instance().initialize();
     Core::Plugins::setNativeProvider([]() {
@@ -75,12 +75,12 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     });
 
     setWindowTitle("atlifm");
-    // Это ещё до show(): тайлинговый WM всё равно выдаст свой тайл, а на
-    // плавающем WM окно сразу откроется нормального размера.
+    // это ещё до show(): тайлинговый wm всё равно выдаст свой тайл, а на
+    // плавающем wm окно сразу откроется нормального размера.
     const auto& ui = Theme::uiConfig();
     resize(ui.windowWidth, ui.windowHeight);
     // иконка вшита в ресурсы а бары вяленого сопоставляют ее по app id,
-    // X11 напрямую; ставим на уровне окна для любого способа запуска
+    // x11 напрямую; ставим на уровне окна для любого способа запуска
     setWindowIcon(QIcon(QStringLiteral(":/atlifm.png")));
 
     applySystemTheme();
@@ -102,7 +102,7 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     std::filesystem::path selectFile;
     if (!startPath.empty()) {
         std::error_code ec;
-        // Open In: передан файл (не папка), открываем его каталог, файл
+        // open in: передан файл (не папка), открываем его каталог, файл
         // выделяем и показываем в превью после загрузки списка
         if (std::filesystem::is_regular_file(startPath, ec)) {
             selectFile = startPath;
@@ -129,8 +129,8 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
 }
 
 MainWindow::~MainWindow() {
-    // При уничтожении дочерних виджетов Qt меняет фокус и шлёт focusChanged;
-    // слот успевал обратиться к уже удалённым QShortcut/оверлеям. Отключаем
+    // при уничтожении дочерних виджетов qt меняет фокус и шлёт focuschanged;
+    // слот успевал обратиться к уже удалённым qshortcut/оверлеям. отключаем
     // глобальные сигналы и фильтр ещё до разрушения дерева.
     if (qApp) {
         qApp->removeEventFilter(this);
@@ -140,8 +140,8 @@ MainWindow::~MainWindow() {
     m_textSensitiveShortcuts.clear();
     m_contextSensitiveShortcuts.clear();
 
-    // Сначала выгружаем плагины, а потом задачи. Плагин при выгрузке может
-    // успеть создать задачу, и она не должна пережить QApplication.
+    // сначала выгружаем плагины, а потом задачи. плагин при выгрузке может
+    // успеть создать задачу, и она не должна пережить qapplication.
     NativePluginHost::instance().setWindow(nullptr);
     NativePluginHost::instance().shutdownAll();
     Core::Tasks::TaskManager::instance().waitForIdle(5000);
@@ -172,8 +172,8 @@ void MainWindow::setupUi() {
     m_tabBar->setFixedHeight(EngineTabBar::kNormalHeight);
     rootLayout->addWidget(m_tabBar, 0);
 
-    // 2. средний ряд: разделитель закладок (110..220) + колонки Miller;
-    // левую панель можно сжать, при нехватке места она сжимается сама (см. resizeEvent)
+    // 2. средний ряд: разделитель закладок (110..220) + колонки miller;
+    // левую панель можно сжать, при нехватке места она сжимается сама (см. resizeevent)
     m_middleSplitter = new QSplitter(Qt::Horizontal, this);
     m_middleSplitter->setObjectName(QStringLiteral("middleSplitter"));
     m_middleSplitter->setHandleWidth(2);
@@ -184,14 +184,14 @@ void MainWindow::setupUi() {
     m_bookmarksBar = new BookmarksBar(m_middleSplitter);
     m_bookmarksBar->show(); // доступна всегда
     m_bookmarksBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    // минимумы адаптивные (см. resizeEvent): в узком окне (<400px) снижаются до 48/140,
+    // минимумы адаптивные (см. resizeevent): в узком окне (<400px) снижаются до 48/140,
     // иначе сумма минимумов (302px) превышала ширину окна и рукоятка не двигалась
     m_bookmarksBar->setMinimumWidth(100);
     m_bookmarksBar->setMaximumWidth(std::max(380, preferredSidebarWidth()));
 
-    // движок Miller из трёх колонок
+    // движок miller из трёх колонок
     m_millerView = new MillerViewContainer(m_middleSplitter);
-    // минимум адаптивный (resizeEvent): в узком окне снижается до 140, чтобы
+    // минимум адаптивный (resizeevent): в узком окне снижается до 140, чтобы
     // рукоятка bookmarks сохраняла реальный ход
     m_millerView->setMinimumWidth(200);
 
@@ -226,14 +226,14 @@ void MainWindow::setupUi() {
     m_millerView->setColumnsConfig(layoutUi.showParentColumn, layoutUi.showPreview,
                                    layoutUi.parentColumnWidth, layoutUi.previewColumnWidth);
 
-    // свойства (ПКМ→Properties, Alt+Enter, закладки) оверлей поверх всего окна:
-    // «как внешнее окно», но часть одного окна; для корня диска/ФС внутри
-    // автоматически раскрывается консоль Disk Usage
+    // свойства (пкм и properties, alt+enter, закладки) оверлей поверх всего окна:
+    // «как внешнее окно», но часть одного окна; для корня диска/фс внутри
+    // автоматически раскрывается консоль disk usage
     connect(m_millerView, &MillerViewContainer::propertiesRequested, this, &MainWindow::showPropertiesOverlay);
 
-    // Open With… полноразмерный оверлей диалога (не подменю и не окно)
+    // open with… полноразмерный оверлей диалога (не подменю и не окно)
     connect(m_millerView, &MillerViewContainer::openWithDialogRequested, this, &MainWindow::showOpenWithOverlay);
-    // Extract In…: меню просит выбор каталога, открываем тот же оверлей
+    // extract in…: меню просит выбор каталога, открываем тот же оверлей
     connect(m_millerView, &MillerViewContainer::extractInRequested, this, &MainWindow::showExtractChooserOverlay);
     connect(m_millerView, &MillerViewContainer::extractInPathRequested, this,
             &MainWindow::showExtractChooserOverlayFor);
@@ -292,7 +292,7 @@ void MainWindow::setupUi() {
         m_bookmarksBar->addBookmark(p);
     });
     // пункты меню закладок проходят через диспетчер оверлеев как одноименные
-    // действия Miller (copy_path, remove_bookmark, clear_trash, properties)
+    // действия miller (copy_path, remove_bookmark, clear_trash, properties)
     connect(m_bookmarksBar, &BookmarksBar::copyPathRequested, this, [this](const std::filesystem::path& p) {
         if (m_millerView->tryPluginOverrideWith(QStringLiteral("copy_path"), {p}, p)) return;
         QApplication::clipboard()->setText(QString::fromUtf8(p.c_str()));
@@ -308,7 +308,7 @@ void MainWindow::setupUi() {
         m_bookmarksBar->refresh();
         m_millerView->refresh();
     });
-    // свойства из закладок/дисков тот же оверлей, что и ПКМ→Properties
+    // свойства из закладок и дисков тот же оверлей, что и пкм и properties
     connect(m_bookmarksBar, &BookmarksBar::propertiesRequested, this, &MainWindow::showPropertiesOverlay);
     connect(m_millerView, &MillerViewContainer::itemSelected, this, [this](const std::filesystem::path& p) {
         if (m_tabBar && m_tabBar->currentIndex() >= 0 && m_tabBar->currentIndex() < m_tabBar->count()) {
@@ -316,7 +316,7 @@ void MainWindow::setupUi() {
         }
     });
 
-    // подключения Miller View
+    // подключения miller view
     connect(m_millerView, &MillerViewContainer::directoryChanged, this, &MainWindow::onDirectoryChanged);
     connect(m_millerView, &MillerViewContainer::archiveEntered, this, [this](const std::filesystem::path& archive) {
         // путь вкладки остаётся каталогом; в заголовке окна и вкладки показываем архив
@@ -340,7 +340,7 @@ void MainWindow::setupUi() {
     connect(m_millerView, &MillerViewContainer::messageEmitted, this, [this](const QString& msg) {
         m_statusBar->setProgressMessage(msg);
     });
-    // плагины C++: notify() и refresh() из host API
+    // плагины c++: notify() и refresh() из host api
     connect(&NativePluginHost::instance(), &NativePluginHost::messageEmitted, this,
             [this](const QString& msg) { m_statusBar->setProgressMessage(msg); });
     connect(&NativePluginHost::instance(), &NativePluginHost::refreshRequested, this, [this]() {
@@ -353,7 +353,7 @@ void MainWindow::setupUi() {
     connect(m_millerView, &MillerViewContainer::filterTriggered, this, [this]() {
         m_statusBar->activateFilter();
     });
-    // аппаратные боковые кнопки мыши из Miller View (override как у go_back/go_forward)
+    // аппаратные боковые кнопки мыши из miller view (override как у go_back/go_forward)
     connect(m_millerView, &MillerViewContainer::navigateHistoryBackRequested, this, [this]() {
         if (m_millerView->isArchiveViewActive()) {
             m_millerView->leaveArchive();
@@ -417,10 +417,10 @@ void MainWindow::setupUi() {
 }
 
 // оверлей свойств: «как внешнее окно», но часть этого же окна, плавающая панель
-// с рамкой Accent по центру, перекрывает только часть колонок (как окно свойств
-// Nautilus); без затемнений и анимаций, radius 0. Внутри PropertiesDialog во
-// встроенном режиме; для корня диска/ФС он сам раскрывает консоль Disk Usage
-// (единственный путь для ПКМ→Properties, Alt+Enter и закладок)
+// с рамкой accent по центру, перекрывает только часть колонок (как окно свойств
+// nautilus); без затемнений и анимаций, radius 0. внутри propertiesdialog во
+// встроенном режиме; для корня диска/фс он сам раскрывает консоль disk usage
+// (единственный путь для пкм и properties, alt+enter и закладок)
 void MainWindow::setupPropertiesOverlay() {
     auto* central = centralWidget();
     if (!central) return;
@@ -429,7 +429,7 @@ void MainWindow::setupPropertiesOverlay() {
     m_propsOverlay->setObjectName(QStringLiteral("propsOverlay"));
     m_propsOverlay->setAttribute(Qt::WA_StyledBackground, true);
     // обводка в несколько пикселей, чтобы оверлей не сливался с окнами менеджера:
-    // 2px рамка Accent и такие же отступы лэйаута, иначе содержимое перекрывает рамку
+    // 2px рамка accent и такие же отступы лэйаута, иначе содержимое перекрывает рамку
     m_propsOverlay->setStyleSheet(QString(
         "QWidget#propsOverlay { background-color: %1; border: 2px solid %2; border-radius: 0px; }"
     ).arg(Theme::Colors::OverlayBg().name(), Theme::Colors::OverlayBorder().name()));
@@ -443,7 +443,7 @@ void MainWindow::setupPropertiesOverlay() {
     m_propsPage->setEmbedded(true);
     overlayLayout->addWidget(m_propsPage);
 
-    // Close/Esc внутри диалога: скрыть панель, фокус назад списку файлов
+    // close/esc внутри диалога: скрыть панель, фокус назад списку файлов
     connect(m_propsPage, &PropertiesDialog::closeRequested, this, [this]() {
         if (m_propsOverlay) m_propsOverlay->hide();
         if (m_millerView) m_millerView->setFocus();
@@ -458,7 +458,7 @@ void MainWindow::positionPropertiesOverlay() {
     auto* central = centralWidget();
     if (!central) return;
 
-    // по центру; для корня диска PropertiesDialog сам раскрывает консоль Disk Usage,
+    // по центру; для корня диска propertiesdialog сам раскрывает консоль disk usage,
     // панель большая (~62%×82% окна, клампы 560..840 × 520..760), колонки видны по краям;
     // компактные свойства панель по высоте содержимого
     const int cw = central->width();
@@ -481,13 +481,13 @@ void MainWindow::positionPropertiesOverlay() {
 }
 
 void MainWindow::showPropertiesOverlay(const std::filesystem::path& path) {
-    // вызов из закладок или списка дисков не проходит через Miller, ещё одна точка override диспетчера
+    // вызов из закладок или списка дисков не проходит через miller, ещё одна точка override диспетчера
     if (!path.empty() && m_millerView->tryPluginOverrideWith(QStringLiteral("properties"), {path}, path))
         return;
     if (!m_propsOverlay || !m_propsPage) setupPropertiesOverlay();
     if (!m_propsOverlay || !m_propsPage || path.empty()) return;
-    // порядок важен: setPath пересчитывает режим консоли Disk Usage (корень диска/ФС),
-    // positionPropertiesOverlay знает итоговую геометрию
+    // порядок важен: setpath пересчитывает режим консоли disk usage (корень диска/фс),
+    // positionpropertiesoverlay знает итоговую геометрию
     m_propsPage->setPath(path);
     positionPropertiesOverlay();
     m_propsOverlay->show();
@@ -495,7 +495,7 @@ void MainWindow::showPropertiesOverlay(const std::filesystem::path& path) {
     m_propsPage->setFocus();
 }
 
-// Open With: та же механика оверлея, что и у свойств, содержимое другой диалог (поиск, DEFAULT APP / OTHER APPS, Always use)
+// open with: та же механика оверлея, что и у свойств, содержимое другой диалог (поиск, default app / other apps, always use)
 void MainWindow::setupOpenWithOverlay() {
     auto* central = centralWidget();
     if (!central) return;
@@ -586,7 +586,7 @@ void MainWindow::setupFileChooserOverlay() {
         }
         updateShortcutAvailability(QApplication::focusWidget());
     });
-    // выбор подтверждён: каталог Extract In… запускает распаковку выделенного
+    // выбор подтверждён: каталог extract in… запускает распаковку выделенного
     // архива в выбранную папку
     connect(m_fileChooserPage, &FileChooserDialog::fileChosen, this, [this](const QString& path) {
         if (m_fileChooserForSshKey) {
@@ -626,7 +626,7 @@ void MainWindow::positionFileChooserOverlay() {
     auto* central = centralWidget();
     if (!central) return;
 
-    // заметно крупнее Open With: сайдбар + широкий список файлов с
+    // заметно крупнее open with: сайдбар + широкий список файлов с
     // колонками размера/даты; по центру окна, с клампами для мелких окон
     const int cw = central->width();
     const int ch = central->height();
@@ -673,9 +673,9 @@ void MainWindow::showSshKeyChooserOverlay(const QString& startPath) {
     updateShortcutAvailability(QApplication::focusWidget());
 }
 
-// Cheat Sheet: та же механика оверлея, что у свойств, панель с 2px рамкой
-// Accent по центру поверх колонок (не отдельное окно и не страница превью);
-// внутри таблица биндов HelpDialog, клик по клавише переназначает действие,
+// cheat sheet: та же механика оверлея, что у свойств, панель с 2px рамкой
+// accent по центру поверх колонок (не отдельное окно и не страница превью);
+// внутри таблица биндов helpdialog, клик по клавише переназначает действие,
 // правый клик reset/disable
 void MainWindow::setupHelpOverlay() {
     auto* central = centralWidget();
@@ -696,20 +696,20 @@ void MainWindow::setupHelpOverlay() {
     overlayLayout->addWidget(m_helpPage);
 
     connect(m_helpPage, &HelpDialog::closeRequested, this, [this]() {
-        // крестик можно нажать прямо во время захвата: без cancelCapture()
-        // все глобальные QShortcut останутся выключенными, а окно уже скрыто
+        // крестик можно нажать прямо во время захвата: без cancelcapture()
+        // все глобальные qshortcut останутся выключенными, а окно уже скрыто
         if (m_helpPage && m_helpPage->isCapturing()) m_helpPage->cancelCapture();
         if (m_helpOverlay) m_helpOverlay->hide();
         if (m_millerView) m_millerView->setFocus();
         updateShortcutAvailability(QApplication::focusWidget());
     });
     // живое применение переназначенных биндов (keybinds.conf пишет сам
-    // HelpDialog через Core::Keybinds::saveUserBinding)
+    // helpdialog через core::keybinds::saveuserbinding)
     connect(m_helpPage, &HelpDialog::keybindChanged, this, &MainWindow::reloadKeybinds);
-    // захват клавиш: пока Cheat Sheet ждет комбинацию, все глобальные
-    // QShortcut выключены. Иначе alwaysActive F3/Ctrl+Q перехватят клавишу,
-    // и назначить ее будет нельзя. После захвата состояния восстанавливает
-    // updateShortcutAvailability
+    // захват клавиш: пока cheat sheet ждет комбинацию, все глобальные
+    // qshortcut выключены. иначе alwaysactive f3/ctrl+q перехватят клавишу,
+    // и назначить ее будет нельзя. после захвата состояния восстанавливает
+    // updateshortcutavailability
     connect(m_helpPage, &HelpDialog::captureChanged, this, [this](bool capturing) {
         if (capturing) {
             for (QShortcut* sc : std::as_const(m_keybindShortcuts)) {
@@ -776,7 +776,7 @@ void MainWindow::toggleTasksOverlay() {
     m_tasksOverlay->show();
     m_tasksOverlay->raise();
     m_tasksOverlay->setFocus();
-    // Del, Enter и стрелки должны попадать в оверлей, а не в глобальные шорткаты.
+    // del, enter и стрелки должны попадать в оверлей, а не в глобальные шорткаты.
     updateShortcutAvailability(QApplication::focusWidget());
 }
 
@@ -994,7 +994,7 @@ void MainWindow::loadSavedLayout() {
     if (!ok || w < 400 || w > 7680) w = ui.windowWidth;
     int h = settings.value(QStringLiteral("layout/window_height"), ui.windowHeight).toInt(&ok);
     if (!ok || h < 300 || h > 4320) h = ui.windowHeight;
-    // setupUi() выполняется до show(); WM всё равно перетайлит окно.
+    // setupui() выполняется до show(); wm всё равно перетайлит окно.
     resize(w, h);
 
     int sidebar = settings.value(QStringLiteral("layout/sidebar_width"), ui.sidebarWidth).toInt(&ok);
@@ -1029,11 +1029,11 @@ void MainWindow::loadSavedLayout() {
         m_millerView->setColumnsConfig(showParent, showPreview,
                                        std::clamp(parent, 80, 10000),
                                        std::clamp(preview, 80, 10000),
-                                       /*exactWidths=*/true);
+                                       /*exactwidths=*/true);
     }
 
-    // sizes() нельзя надёжно отложить до showEvent: resize() внутри конструктора
-    // может уже применить тему и выставить initial=true. Поэтому ширину
+    // sizes() нельзя надёжно отложить до showevent: resize() внутри конструктора
+    // может уже применить тему и выставить initial=true. поэтому ширину
     // сохранённого сайдбара задаём сразу.
     m_initialSplitterSizesApplied = false;
     if (m_middleSplitter && m_bookmarksBar &&
@@ -1128,9 +1128,9 @@ void MainWindow::showExtractChooserOverlay() {
     m_extractArchiveOverride.clear();
     if (!m_fileChooserOverlay || !m_fileChooserPage) setupFileChooserOverlay();
     if (!m_fileChooserOverlay || !m_fileChooserPage || !m_millerView) return;
-    // Extract In…: тот же диалог «как open file», но в режиме каталогов
-    // и с кнопкой Extract, старт текущая папка; выбор подтверждает обработчик
-    // fileChosen (см. setupFileChooserOverlay), распаковка выделенного архива
+    // extract in…: тот же диалог «как open file», но в режиме каталогов
+    // и с кнопкой extract, старт текущая папка; выбор подтверждает обработчик
+    // filechosen (см. setupfilechooseroverlay), распаковка выделенного архива
     m_fileChooserForExtract = true;
     m_fileChooserForSshKey = false;
     m_fileChooserPage->setDirectoryMode(true);
@@ -1144,8 +1144,8 @@ void MainWindow::showExtractChooserOverlay() {
 }
 
 void MainWindow::showExtractChooserOverlayFor(const std::filesystem::path& archivePath) {
-    // Extract In… из папки превью: архив фиксирован, выставляем после
-    // открытия окна (showExtractChooserOverlay сбрасывает override)
+    // extract in… из папки превью: архив фиксирован, выставляем после
+    // открытия окна (showextractchooseroverlay сбрасывает override)
     showExtractChooserOverlay();
     if (m_fileChooserForExtract) m_extractArchiveOverride = archivePath;
 }
@@ -1153,18 +1153,18 @@ void MainWindow::showExtractChooserOverlayFor(const std::filesystem::path& archi
 void MainWindow::setupShortcuts() {
     createKeybindShortcuts();
 
-    // печатные и «одноклавишные» шорткаты (g, ?, Del, Ctrl+C/V/X, F2…) срабатывают
-    // до keyPressEvent текстового поля, поэтому при фокусе в текстовых полях их гасим;
-    // alwaysActive=true (Esc, фокус на path/filter, Ctrl+Q) всегда активны
+    // печатные и «одноклавишные» шорткаты (g, ?, del, ctrl+c/v/x, f2…) срабатывают
+    // до keypressevent текстового поля, поэтому при фокусе в текстовых полях их гасим;
+    // alwaysactive=true (esc, фокус на path/filter, ctrl+q) всегда активны
     connect(qApp, &QApplication::focusChanged, this,
             [this](QWidget*, QWidget* now) { updateShortcutAvailability(now); });
     updateShortcutAvailability(QApplication::focusWidget());
 }
 
 void MainWindow::createKeybindShortcuts() {
-    // клавиатурная карта из Core::Keybinds: QShortcut на каждую назначенную
+    // клавиатурная карта из core::keybinds: qshortcut на каждую назначенную
     // клавишу, пустой список = действие отключено; повторный вызов пересоздаёт
-    // весь набор (reloadKeybinds, живые переназначения из Cheat Sheet)
+    // весь набор (reloadkeybinds, живые переназначения из cheat sheet)
     for (QShortcut* sc : std::as_const(m_keybindShortcuts))
         delete sc;
     m_keybindShortcuts.clear();
@@ -1179,19 +1179,19 @@ void MainWindow::createKeybindShortcuts() {
         };
         const bool always = Core::Keybinds::isAlwaysActive(action);
         // path/filter остаются доступны из текстового поля, но уступают
-        // оверлеям и inline prompt, иначе Ctrl+L или Ctrl+F уведут фокус
+        // оверлеям и inline prompt, иначе ctrl+l или ctrl+f уведут фокус
         // из открытого диалога
         const bool contextSensitive = action == QLatin1String("focus_path") ||
                                       action == QLatin1String("filter");
         for (const QString& key : Core::Keybinds::keysFor(action)) {
             const QString canonical = QKeySequence(key).toString(QKeySequence::PortableText);
             if (canonical.isEmpty()) continue;
-            // Два QShortcut на одну комбинацию Qt считает неоднозначными и
-            // может погасить оба. Оставляем первый бинд и предупреждаем,
+            // два qshortcut на одну комбинацию qt считает неоднозначными и
+            // может погасить оба. оставляем первый бинд и предупреждаем,
             // чтобы конфликт из plugin/config не отключал действие молча.
             const auto used = usedKeys.constFind(canonical);
             if (used != usedKeys.constEnd()) {
-                // дубль внутри одного действия (Alt+Return и Alt+Enter)
+                // дубль внутри одного действия (alt+return и alt+enter)
                 // безвреден а действие между разными командами грозит неоднозначным шорткатом
                 if (used.value() != action) {
                     qWarning("[keybinds] duplicate shortcut %s for action %s skipped "
@@ -1218,7 +1218,7 @@ void MainWindow::createKeybindShortcuts() {
 
     bind("open_in_new_tab", [this]() { m_millerView->openSelectionInNewTab(); });
 
-    // закрыть вкладку (Ctrl+W / Ctrl+F4 по умолчанию)
+    // закрыть вкладку (ctrl+w / ctrl+f4 по умолчанию)
     bind("close_tab", [this]() {
         onTabCloseRequested(m_tabBar->currentIndex());
     });
@@ -1232,7 +1232,7 @@ void MainWindow::createKeybindShortcuts() {
         }
     });
 
-    // переоткрыть закрытую вкладку (Chrome / VSCode / Zed / Explorer)
+    // переоткрыть закрытую вкладку (chrome / vscode / zed / explorer)
     bind("reopen_tab", [this]() {
         if (!m_closedTabsHistory.empty()) {
             auto path = m_closedTabsHistory.back();
@@ -1250,7 +1250,7 @@ void MainWindow::createKeybindShortcuts() {
         });
     }
 
-    // следующая вкладка (Ctrl+Tab / Ctrl+PgDown по умолчанию)
+    // следующая вкладка (ctrl+tab / ctrl+pgdown по умолчанию)
     bind("next_tab", [this]() {
         if (m_tabBar->count() > 0) {
             int next = (m_tabBar->currentIndex() + 1) % m_tabBar->count();
@@ -1258,7 +1258,7 @@ void MainWindow::createKeybindShortcuts() {
         }
     });
 
-    // предыдущая вкладка (Ctrl+Shift+Tab / Ctrl+PgUp по умолчанию)
+    // предыдущая вкладка (ctrl+shift+tab / ctrl+pgup по умолчанию)
     bind("prev_tab", [this]() {
         if (m_tabBar->count() > 0) {
             int prev = (m_tabBar->currentIndex() - 1 + m_tabBar->count()) % m_tabBar->count();
@@ -1266,10 +1266,10 @@ void MainWindow::createKeybindShortcuts() {
         }
     });
 
-    // фокус на ввод пути (Ctrl+L / Alt+D / F4 по умолчанию)
+    // фокус на ввод пути (ctrl+l / alt+d / f4 по умолчанию)
     bind("focus_path", [this]() { m_statusBar->focusPathInput(); });
 
-    // родительский каталог (Alt+Up по умолчанию)
+    // родительский каталог (alt+up по умолчанию)
     bind("parent_dir", [this]() {
         if (m_millerView->isArchiveViewActive()) {
             m_millerView->leaveArchive();
@@ -1313,11 +1313,11 @@ void MainWindow::createKeybindShortcuts() {
         m_millerView->setDirectory(home ? home : "/");
     });
 
-    // первый/последний элемент центральной колонки (Home / End)
+    // первый/последний элемент центральной колонки (home / end)
     bind("first_item", [this]() { m_millerView->selectFirst(); });
     bind("last_item", [this]() { m_millerView->selectLast(); });
 
-    // переключить закладки / сайдбар (Ctrl+B / Ctrl+\ / F9 по умолчанию)
+    // переключить закладки / сайдбар (ctrl+b / ctrl+\ / f9 по умолчанию)
     bind("toggle_bookmarks", [this]() { toggleBookmarks(); });
 
     // быстрый переход
@@ -1332,7 +1332,7 @@ void MainWindow::createKeybindShortcuts() {
         m_statusBar->activateFilter();
     });
 
-    // показать или скрыть скрытые файлы (Ctrl+H / Ctrl+. по умолчанию)
+    // показать или скрыть скрытые файлы (ctrl+h / ctrl+. по умолчанию)
     bind("toggle_hidden", [this]() { m_millerView->toggleHidden(); });
 
     // режимы сортировки
@@ -1349,7 +1349,7 @@ void MainWindow::createKeybindShortcuts() {
     // выделить всё
     bind("select_all", [this]() { m_millerView->selectAll(); });
 
-    // отмена: Escape снимает подсказку ввода / активную файловую операцию / оверлеи / выделение
+    // отмена: escape снимает подсказку ввода / активную файловую операцию / оверлеи / выделение
     bind("cancel", [this]() {
 
         if (m_fileChooserOverlay && m_fileChooserOverlay->isVisible()) {
@@ -1379,20 +1379,20 @@ void MainWindow::createKeybindShortcuts() {
             return;
         }
 
-        // массовое переименование: Esc закрывает панель, ничего не меняя
+        // массовое переименование: esc закрывает панель, ничего не меняя
         if (m_bulkRenameOverlay && m_bulkRenameOverlay->isVisible()) {
             hideBulkRenameOverlay();
             return;
         }
 
-        // TasksOverlay: Esc возвращает из лога к списку, иначе закрывает панель
+        // tasksoverlay: esc возвращает из лога к списку, иначе закрывает панель
         if (m_tasksOverlay && m_tasksOverlay->isVisible()) {
             QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
             QApplication::sendEvent(m_tasksOverlay, &esc);
             return;
         }
 
-        // Cheat Sheet (F1/?) самый «верхний» оверлей: Esc либо отменяет
+        // cheat sheet (f1/?) самый «верхний» оверлей: esc либо отменяет
         // захват клавиши, либо закрывает шпаргалку
         if (m_helpOverlay && m_helpOverlay->isVisible()) {
             if (m_helpPage && m_helpPage->isCapturing()) {
@@ -1422,7 +1422,7 @@ void MainWindow::createKeybindShortcuts() {
             return;
         }
 
-        // оверлей вывода плагина (Plugins) транзиентный, закрывается первым
+        // оверлей вывода плагина (plugins) транзиентный, закрывается первым
         const auto outputs = findChildren<TuiOutputOverlay*>(Qt::FindDirectChildrenOnly);
         for (int i = outputs.size() - 1; i >= 0; --i) {
             if (outputs[i]->isVisible()) {
@@ -1431,7 +1431,7 @@ void MainWindow::createKeybindShortcuts() {
             }
         }
 
-        // оверлей Open With открыт: закрываем его, иначе QShortcut перехватит Esc до обработчика диалога
+        // оверлей open with открыт: закрываем его, иначе qshortcut перехватит esc до обработчика диалога
         if (m_openWithOverlay && m_openWithOverlay->isVisible()) {
             m_openWithOverlay->hide();
             if (m_millerView) m_millerView->setFocus();
@@ -1446,13 +1446,13 @@ void MainWindow::createKeybindShortcuts() {
             Dnd::DragDropHandler::cancelActiveOperation();
             return;
         }
-        // архив в центре: Esc возвращает к каталогу, не трогая выделение под ним
+        // архив в центре: esc возвращает к каталогу, не трогая выделение под ним
         if (m_millerView->isArchiveViewActive()) {
             m_millerView->leaveArchive();
             return;
         }
         m_millerView->clearSelection();
-        // фильтр транзиентный: Esc снимает его вместе с редактором
+        // фильтр транзиентный: esc снимает его вместе с редактором
         if (m_statusBar->isFilterActive()) {
             if (m_statusBar->cancelFilterCommand()) return;
             m_statusBar->clearFilter();
@@ -1485,8 +1485,8 @@ void MainWindow::createKeybindShortcuts() {
         }
     });
 
-    // Redo (Ctrl+Y / Ctrl+Shift+Z дефолт; QKeySequence::Redo на Linux
-    // резолвится ровно в Ctrl+Y, поэтому оба варианта в таблице)
+    // redo (ctrl+y / ctrl+shift+z дефолт; qkeysequence::redo на linux
+    // резолвится ровно в ctrl+y, поэтому оба варианта в таблице)
     auto doRedo = [this]() {
         QString msg;
         std::filesystem::path selectPath;
@@ -1534,8 +1534,8 @@ void MainWindow::createKeybindShortcuts() {
     // выход
     bind("quit", [this]() { close(); });
 
-    // кастомные действия плагинов (Action/Keys в plugins/*.conf): как у пункта
-    // меню Plugins, выделение центра + текущий каталог
+    // кастомные действия плагинов (action/keys в plugins/*.conf): как у пункта
+    // меню plugins, выделение центра + текущий каталог
     {
         const auto pluginActions = Core::Keybinds::acceptedPluginActions();
         for (auto it = pluginActions.constBegin(); it != pluginActions.constEnd(); ++it) {
@@ -1549,11 +1549,11 @@ void MainWindow::createKeybindShortcuts() {
         }
     }
 
-    // состав textSensitive: как в setupShortcuts, печатные шорткаты уступают
-    // ввод в текстовых полях, alwaysActive остаются; пересчитывается при каждом
-    // пересоздании (после живого переназначения биндов из Cheat Sheet)
-    // только глобальные бинды этого окна, а не QShortcut внутри дочерних
-    // диалогов: иначе Esc и Ctrl+L самого FileChooserDialog тоже погаснут
+    // состав textsensitive: как в setupshortcuts, печатные шорткаты уступают
+    // ввод в текстовых полях, alwaysactive остаются; пересчитывается при каждом
+    // пересоздании (после живого переназначения биндов из cheat sheet)
+    // только глобальные бинды этого окна, а не qshortcut внутри дочерних
+    // диалогов: иначе esc и ctrl+l самого filechooserdialog тоже погаснут
     m_textSensitiveShortcuts = m_keybindShortcuts;
     for (QShortcut* sc : std::as_const(alwaysActive))
         m_textSensitiveShortcuts.removeAll(sc);
@@ -1562,8 +1562,8 @@ void MainWindow::createKeybindShortcuts() {
 }
 
 // живое применение keybinds.conf: перечитать конфиг, пересоздать шорткаты,
-// восстановить доступность по фокусу. Вызывается из Cheat Sheet после
-// каждого rebind/reset/disable (сигнал keybindChanged)
+// восстановить доступность по фокусу. вызывается из cheat sheet после
+// каждого rebind/reset/disable (сигнал keybindchanged)
 void MainWindow::reloadKeybinds() {
     Core::Keybinds::reload();
     createKeybindShortcuts();
@@ -1638,13 +1638,13 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     positionConnectionOverlay();
     positionBulkRenameOverlay();
 
-    // оверлеи вывода плагинов (Plugins) держатся правого нижнего угла окна
+    // оверлеи вывода плагинов (plugins) держатся правого нижнего угла окна
     const auto outputOverlays = findChildren<TuiOutputOverlay*>(Qt::FindDirectChildrenOnly);
     for (TuiOutputOverlay* ov : outputOverlays) {
         if (ov && ov->isVisible()) ov->repositionWithinParent();
     }
 
-    // компактная шапка 20px при высоте окна < 480, иначе высота EngineTabBar::kNormalHeight (30px)
+    // компактная шапка 20px при высоте окна < 480, иначе высота enginetabbar::knormalheight (30px)
     const bool compactBars = event->size().height() < 480;
     const int barH = compactBars ? 20 : EngineTabBar::kNormalHeight;
     const int statusBarH = 25; // статус: контент 18px + 7px отступа
@@ -1873,7 +1873,7 @@ void MainWindow::onTabChanged(int index) {
     if (m_millerView && m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
     saveCurrentTabState();
     restoreTabState(index);
-    // archiveLeft мог обновить заголовок уже выбранной вкладки: синхронизируем с её каталогом
+    // archiveleft мог обновить заголовок уже выбранной вкладки: синхронизируем с её каталогом
     if (m_millerView && !m_millerView->currentDirectory().empty()) {
         onDirectoryChanged(m_millerView->currentDirectory());
     }

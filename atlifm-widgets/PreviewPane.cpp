@@ -62,20 +62,20 @@
 namespace Widgets {
 
 namespace {
-// Превью декодируется не в полном разрешении: панель всё равно показывает
+// превью декодируется не в полном разрешении: панель всё равно показывает
 // несколько сотен пикселей а оригинал высокого разрешения занимает десятки мегабайт
-// Оригинал подгружается фоном только когда пользователь зумит в изображение.
+// оригинал подгружается фоном только когда пользователь зумит в изображение.
 constexpr int kPreviewMaxSide = 1280;
 constexpr int kFullResMaxSide = 4096;
-constexpr qint64 kImageCacheBudgetBytes = 16LL * 1024 * 1024;
-constexpr int kImageCacheMaxEntries = 4;
-constexpr qint64 kScaledPixmapBudgetBytes = 16LL * 1024 * 1024;
-// ширина рендера страницы PDF: панель превью заметно уже, а каждый лишний
+constexpr qint64 kImageCacheBudgetBytes = 6LL * 1024 * 1024;
+constexpr int kImageCacheMaxEntries = 2;
+constexpr qint64 kScaledPixmapBudgetBytes = 4LL * 1024 * 1024;
+// ширина рендера страницы pdf: панель превью заметно уже а каждый лишний
 // пиксель страницы стоит памяти и времени рендера
 constexpr int kPdfPageRenderWidth = 720;
-// полноразмерные кадры нужны только последним страницам (пересчёт при
-// изменении ширины панели), остальным достаточно pixmap в QLabel
-constexpr std::size_t kMaxCachedPdfPageImages = 2;
+// полноразмерные кадры нужны только последним страницам для пересчета при
+// изменении ширины панели а остальным достаточно pixmap в qlabel
+constexpr std::size_t kMaxCachedPdfPageImages = 1;
 // оригинал подгружается когда уменьшенное превью начинают растягивать
 // выше его собственных пикселей с небольшим запасом
 constexpr double kFullResTriggerScale = 0.9;
@@ -87,7 +87,7 @@ QSize boundedSize(const QSize& size, int maxSide) {
 }
 
 // glibc оставляет освобождённые крупные декоды в арене: после фото 6000x4000
-// это ~20 МБ rss навсегда, поэтому отдаём свободные страницы ядру сразу
+// это ~20 мб rss навсегда, поэтому отдаём свободные страницы ядру сразу
 void releaseDecodeBuffers() {
 #if defined(__GLIBC__)
     malloc_trim(0);
@@ -220,7 +220,7 @@ void SimpleSyntaxHighlighter::setLanguage(const QString& rawExt) {
         keywords = {"true", "false", "null"};
         m_commentPattern = QRegularExpression(R"(//[^\n]*)");
     } else {
-        // ветка по умолчанию для C/C++/JS/TS
+        // ветка по умолчанию для c/c++/js/ts
         keywords = {"alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor",
                     "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
                     "class", "compl", "concept", "const", "consteval", "constexpr", "constinit",
@@ -333,7 +333,7 @@ int CodeEditorWithLineNumbers::lineNumberAreaWidth() {
     return space;
 }
 
-void CodeEditorWithLineNumbers::updateLineNumberAreaWidth(int /* newBlockCount */) {
+void CodeEditorWithLineNumbers::updateLineNumberAreaWidth(int /* newblockcount */) {
     setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
 }
 
@@ -454,7 +454,7 @@ public:
         if (m_image.isNull() || width() <= 0 || height() <= 0) return;
         double sx = static_cast<double>(width()) / m_image.width();
         double sy = static_cast<double>(height()) / m_image.height();
-        // Уменьшенное превью можно растягивать до размера оригинала, но не
+        // уменьшенное превью можно растягивать до размера оригинала, но не
         // выше: мелкие картинки по прежнему не увеличиваем больше ста процентов
         double maxScale = 1.0;
         if (m_isPreviewScaled && !m_originalSize.isEmpty()) {
@@ -469,7 +469,7 @@ public:
 
     QString currentZoomText() const {
         if (m_image.isNull() || m_originalSize.isEmpty()) return "";
-        // Процент считаем относительно исходника, а не уменьшенного превью,
+        // процент считаем относительно исходника, а не уменьшенного превью,
         // иначе он скачет в момент подгрузки оригинала
         const double effectiveScale = m_scale * double(m_image.width()) /
                                       double(m_originalSize.width());
@@ -501,8 +501,8 @@ protected:
                           std::max(1, qRound(m_image.height() * m_scale)) );
         QRectF targetRect(m_pan.x(), m_pan.y(), targetSize.width(), targetSize.height());
 
-        // Кэшированный pixmap ускоряет отрисовку, но на большом зуме он сам
-        // может занять десятки мегабайт. Выше лимита рисуем напрямую из QImage.
+        // кэшированный pixmap ускоряет отрисовку, но на большом зуме он сам
+        // может занять десятки мегабайт. выше лимита рисуем напрямую из qimage.
         const qint64 pixmapBytes = qint64(targetSize.width()) * targetSize.height() * 4;
         if (m_scale <= 2.0 && pixmapBytes <= kScaledPixmapBudgetBytes) {
             if (m_scaledPixmap.isNull() || m_scaledTargetSize != targetSize) {
@@ -512,8 +512,8 @@ protected:
             }
             p.drawPixmap(targetRect.topLeft(), m_scaledPixmap);
         } else {
-            // На большом зуме масштабируем только видимую часть картинки,
-            // иначе Qt каждый кадр обрабатывает весь огромный targetRect.
+            // на большом зуме масштабируем только видимую часть картинки,
+            // иначе qt каждый кадр обрабатывает весь огромный targetrect.
             const QRectF visible = targetRect.intersected(QRectF(rect()));
             if (visible.isEmpty()) return;
             const QRectF source((visible.left() - targetRect.left()) / m_scale,
@@ -621,7 +621,7 @@ private:
         ++m_fullResRequest;
         m_fullResRequested = false;
         if (m_isPreviewScaled || m_image.isNull()) return;
-        // Если на вписанном виде превью всё равно пришлось бы растягивать
+        // если на вписанном виде превью всё равно пришлось бы растягивать
         // если панель большая то оригинал нужен для качества
         const QSize previewSize = boundedSize(m_originalSize, kPreviewMaxSide);
         if (previewSize.isValid()) {
@@ -631,7 +631,7 @@ private:
         }
         const QSize target = boundedSize(m_image.size(), kPreviewMaxSide);
         if (target == m_image.size()) return;
-        // Сохраняем визуальный размер: scale считается от пикселей картинки.
+        // сохраняем визуальный размер: scale считается от пикселей картинки.
         const double factor = double(m_image.width()) / double(target.width());
         m_image = m_image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         m_scale *= factor;
@@ -646,7 +646,7 @@ private:
             m_filePath.empty() || m_originalSize.isEmpty()) {
             return;
         }
-        // Пока превью показывается 1:1 или уменьшенным, его пикселей хватает.
+        // пока превью показывается 1:1 или уменьшенным, его пикселей хватает.
         // если догрузка уже началась то отменяем ее потому что она больше не нужна
         if (m_scale < kFullResTriggerScale) {
             m_fullResTimer.stop();
@@ -1009,20 +1009,21 @@ private:
     QVBoxLayout* m_cardsLayout{nullptr};
 };
 
-// постраничный PDF: страницы добавляются по мере прокрутки, рендер идёт в
-// фоновом пуле PreviewPane, поэтому виджет только показывает готовые кадры
+// постраничный pdf: страницы добавляются по мере прокрутки, рендер идёт в
+// фоновом пуле previewpane, поэтому виджет только показывает готовые кадры
 class DocumentViewer : public QWidget {
     Q_OBJECT
 
 public:
     explicit DocumentViewer(QWidget* parent = nullptr)
         : QWidget(parent) {
-        setFocusPolicy(Qt::StrongFocus);
+        setFocusPolicy(Qt::ClickFocus);
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
         m_scroll = new QScrollArea(this);
+        m_scroll->setFocusPolicy(Qt::NoFocus);
         m_scroll->setWidgetResizable(true);
         m_scroll->setFrameShape(QFrame::NoFrame);
         m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -1036,6 +1037,10 @@ public:
         m_layout->setSpacing(8);
         m_scroll->setWidget(m_pages);
         layout->addWidget(m_scroll, 1);
+
+        m_scroll->installEventFilter(this);
+        if (m_scroll->viewport()) m_scroll->viewport()->installEventFilter(this);
+        m_pages->installEventFilter(this);
     }
 
     void setDocument(const std::filesystem::path& path, int pageCount) {
@@ -1050,6 +1055,7 @@ public:
         m_placeholder->setAlignment(Qt::AlignCenter);
         m_placeholder->setFont(Theme::getMonospaceFont(9));
         m_placeholder->setStyleSheet(QString("color: %1;").arg(Theme::Colors::Dim().name()));
+        m_placeholder->installEventFilter(this);
         m_layout->addWidget(m_placeholder);
         QTimer::singleShot(0, this, [this]() { maybeRequestNext(); });
     }
@@ -1072,11 +1078,12 @@ public:
         auto* label = new QLabel(m_pages);
         label->setAlignment(Qt::AlignCenter);
         label->setStyleSheet(QString("background-color: %1;").arg(Theme::Colors::Base().name()));
+        label->installEventFilter(this);
         m_layout->addWidget(label);
         m_pagesData.push_back({page, image, label});
         scalePage(m_pagesData.back());
-        // кадры нужны только последним страницам для пересчёта при
-        // изменении ширины панели; у остальных остаётся готовый pixmap
+        // кадры нужны только последним страницам для пересчета при
+        // изменении ширины панели а остальным достаточно pixmap в qlabel
         if (m_pagesData.size() > kMaxCachedPdfPageImages) {
             m_pagesData[m_pagesData.size() - kMaxCachedPdfPageImages - 1].image = QImage();
         }
@@ -1100,7 +1107,7 @@ public:
         if (page == 1) {
             if (m_placeholder) {
                 m_placeholder->setText(error.isEmpty() ? QStringLiteral("PDF preview unavailable")
-                                                       : error);
+                                                        : error);
             }
             return;
         }
@@ -1112,7 +1119,22 @@ signals:
     void pageRequested(int page);
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::MouseButtonPress) {
+            setFocus(Qt::MouseFocusReason);
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Escape) {
+            clearFocus();
+            if (auto* w = window()->findChild<MillerListView*>()) {
+                w->setFocus();
+            }
+            event->accept();
+            return;
+        }
         auto* bar = m_scroll->verticalScrollBar();
         const int step = qMax(40, m_scroll->viewport()->height() / 3);
         if (event->key() == Qt::Key_Down) {
@@ -1231,14 +1253,14 @@ void PreviewPane::setupUi() {
 
     m_stackedWidget = new QStackedWidget(this);
 
-    // PageEmpty: заглушка пустого состояния
+    // pageempty: заглушка пустого состояния
     m_emptyLabel = new QLabel("Select an item to preview", this);
     m_emptyLabel->setAlignment(Qt::AlignCenter);
     m_emptyLabel->setFont(Theme::getMonospaceFont(9));
     m_emptyLabel->setStyleSheet(QString("color: %1;").arg(Theme::Colors::Dim().name()));
     m_stackedWidget->addWidget(m_emptyLabel);
 
-    // PageImage: интерактивный просмотр изображения с панорамированием и зумом
+    // pageimage: интерактивный просмотр изображения с панорамированием и зумом
     m_imageContainer = new QWidget(this);
     auto imageLayout = new QVBoxLayout(m_imageContainer);
     imageLayout->setContentsMargins(8, 8, 8, 8);
@@ -1259,15 +1281,15 @@ void PreviewPane::setupUi() {
 
     m_stackedWidget->addWidget(m_imageContainer);
 
-    // PageCode: редактор кода с подсветкой синтаксиса
+    // pagecode: редактор кода с подсветкой синтаксиса
     m_codeViewer = new CodeEditorWithLineNumbers(this);
     m_codeViewer->setReadOnly(true);
     m_stackedWidget->addWidget(m_codeViewer);
 
-    // PageDir: превью листинга каталога, приглушённое как родительская колонка
+    // pagedir: превью листинга каталога, приглушённое как родительская колонка
     m_dirListView = new MillerListView(true, this);
     m_dirModel = new Models::FileSystemModel(this);
-    // Превью не показывает размер, дату и права, зато листинг больших папок
+    // превью не показывает размер, дату и права, зато листинг больших папок
     // становится заметно быстрее.
     m_dirModel->setLightweightScan(true);
     m_dirDelegate = new FileItemDelegate(true, this);
@@ -1284,7 +1306,7 @@ void PreviewPane::setupUi() {
         Core::XdgUtils::openWithDefault(p);
     });
     connect(m_dirListView, &MillerListView::filesDropped, this, [this](const auto& sources, const auto& targetDir, auto action, auto mods) {
-        // QPointer защита: фоновый copy/move может завершиться после разрушения панели
+        // qpointer защита: фоновый copy/move может завершиться после разрушения панели
         QPointer<PreviewPane> guard(this);
         Dnd::DragDropHandler::handleDrop(sources, targetDir, action, mods, this, [guard]() {
             if (guard && guard->m_dirModel) guard->m_dirModel->refresh();
@@ -1309,7 +1331,7 @@ void PreviewPane::setupUi() {
 
     m_stackedWidget->addWidget(m_dirListView);
 
-    // PageHex: форматированный hex дамп
+    // pagehex: форматированный hex дамп
     m_hexViewer = new QPlainTextEdit(this);
     m_hexViewer->setReadOnly(true);
     m_hexViewer->setFont(Theme::getMonospaceFont(9));
@@ -1319,7 +1341,7 @@ void PreviewPane::setupUi() {
                                 .arg(Theme::Colors::Base().name(), Theme::Colors::Dim().name()));
     m_stackedWidget->addWidget(m_hexViewer);
 
-    // PageMedia: метаданные медиа
+    // pagemedia: метаданные медиа
     m_mediaViewer = new QPlainTextEdit(this);
     m_mediaViewer->setReadOnly(true);
     m_mediaViewer->setFont(Theme::getMonospaceFont(9));
@@ -1329,11 +1351,11 @@ void PreviewPane::setupUi() {
                                   .arg(Theme::Colors::Base().name(), Theme::Colors::Dim().name()));
     m_stackedWidget->addWidget(m_mediaViewer);
 
-    // PageConflictResolver: интерактивный выбор при конфликтах
+    // pageconflictresolver: интерактивный выбор при конфликтах
     m_conflictResolver = new ConflictResolverWidget(this);
     m_stackedWidget->addWidget(m_conflictResolver);
 
-    // PageArchive: интерактивный листинг архива, перетаскивание с распаковкой в кэш
+    // pagearchive: интерактивный листинг архива, перетаскивание с распаковкой в кэш
     m_archivePage = new QWidget(this);
     {
         auto* archiveLayout = new QVBoxLayout(m_archivePage);
@@ -1341,7 +1363,9 @@ void PreviewPane::setupUi() {
         archiveLayout->setSpacing(0);
 
         m_archiveModel = new Models::ArchiveModel(this);
+        m_archiveModel->setAllowPrompt(false);
         m_archiveTree = new ArchiveTreeWidget(m_archivePage);
+        m_archiveTree->setFocusPolicy(Qt::NoFocus);
         m_archiveTree->setArchiveModel(m_archiveModel);
         archiveLayout->addWidget(m_archiveTree, 1);
     }
@@ -1362,7 +1386,7 @@ void PreviewPane::setupUi() {
             this, &PreviewPane::messageRequested);
     m_stackedWidget->addWidget(m_archivePage);
 
-    // PageDocument: PDF, постраничная прокрутка и фоновая догрузка страниц
+    // pagedocument: pdf, постраничная прокрутка и фоновая догрузка страниц
     m_documentViewer = new DocumentViewer(this);
     connect(m_documentViewer, &DocumentViewer::pageRequested,
             this, &PreviewPane::requestDocumentPage);
@@ -1372,7 +1396,7 @@ void PreviewPane::setupUi() {
     m_stackedWidget->setCurrentIndex(PageEmpty);
 
     // дебаунс превью: коалесцирует быстрые смены выделения и предотвращает
-    // ложный сброс на PageEmpty при перезагрузке модели (watcher / rename / delete)
+    // ложный сброс на pageempty при перезагрузке модели (watcher / rename / delete)
     m_previewDebounce = new QTimer(this);
     m_previewDebounce->setSingleShot(true);
     m_previewDebounce->setInterval(16);
@@ -1489,12 +1513,12 @@ void PreviewPane::onDirContextMenu(const QPoint& globalPos, const QModelIndex& i
             Core::XdgUtils::openWithApp(app, sel.front());
         }
     });
-    // «Open With...» полноразмерный диалог (оверлей в MainWindow)
+    // «open with...» полноразмерный диалог (оверлей в mainwindow)
     connect(menu, &TuiContextMenu::openWithRequested, this, [this, sel]() {
         if (!sel.empty()) emit openWithDialogRequested(sel.front());
     });
     // extract: here прямо рядом с архивом (в его папке), in: каталог назначения
-    // выбирает MainWindow оверлеем FileChooserDialog с кнопкой Extract
+    // выбирает mainwindow оверлеем filechooserdialog с кнопкой extract
     connect(menu, &TuiContextMenu::extractHereRequested, this, [this, sel]() {
         if (sel.empty()) return;
         const std::filesystem::path arc = sel.front();
@@ -1536,7 +1560,7 @@ void PreviewPane::onDirContextMenu(const QPoint& globalPos, const QModelIndex& i
     });
     connect(menu, &TuiContextMenu::extractInRequested, this, [this, sel]() {
         if (sel.empty()) return;
-        // hideEvent меню возвращает фокус панели; оверлей открываем после этого
+        // hideevent меню возвращает фокус панели; оверлей открываем после этого
         QTimer::singleShot(0, this, [this, archive = sel.front()]() {
             emit extractInRequested(archive);
         });
@@ -1641,8 +1665,11 @@ void PreviewPane::performClearNow() {
     if (m_imageViewer) {
         m_imageViewer->clear();
     }
+    if (m_archiveTree) m_archiveTree->clearArchive();
+    if (m_archiveModel) m_archiveModel->clear();
     if (m_emptyLabel) m_emptyLabel->setText("Select an item to preview");
     if (m_stackedWidget) m_stackedWidget->setCurrentIndex(PageEmpty);
+    releaseDecodeBuffers();
 }
 
 void PreviewPane::prefetchPath(const std::filesystem::path& path) {
@@ -1725,7 +1752,7 @@ void PreviewPane::clearPreview() {
             return;
         }
     }
-    // не сбрасываем синхронно в PageEmpty: при пересканировании каталога (watcher / rename / delete)
+    // не сбрасываем синхронно в pageempty: при пересканировании каталога (watcher / rename / delete)
     // выделение на миг очищается и восстанавливается, отложенная очистка убирает мигание пустотой
     m_hasPending = false;
     m_pendingPath.clear();
@@ -1754,7 +1781,6 @@ void PreviewPane::startDocumentPreview(const std::filesystem::path& path, int pa
     if (!m_documentViewer) return;
     m_documentViewer->setDocument(path, pageCount);
     m_stackedWidget->setCurrentIndex(PageDocument);
-    m_documentViewer->setFocus(Qt::OtherFocusReason);
 }
 
 void PreviewPane::requestDocumentPage(int page) {
@@ -1823,14 +1849,17 @@ void PreviewPane::storeInImageCache(CachedImageEntry entry) {
     for (const auto& cached : m_imageCache) {
         totalBytes += cached.image.sizeInBytes();
     }
-    // Старые записи вытесняются по общему бюджету, а не только по числу
-    // файлов: снимки полного разрешения легко превращались в сотни мегабайт
+    // старые записи вытесняются по общему бюджету а не только по числу
+    // файлов чтобы снимки высокого разрешения не раздували память
+    bool evicted = false;
     while (m_imageCache.size() > 1 &&
            (m_imageCache.size() > kImageCacheMaxEntries ||
             totalBytes > kImageCacheBudgetBytes)) {
         totalBytes -= m_imageCache.front().image.sizeInBytes();
         m_imageCache.erase(m_imageCache.begin());
+        evicted = true;
     }
+    if (evicted) releaseDecodeBuffers();
 }
 
 void PreviewPane::previewPath(const std::filesystem::path& path) {
@@ -1844,8 +1873,8 @@ void PreviewPane::previewPath(const std::filesystem::path& path) {
 
     m_pendingClear = false;
 
-    // Каталоги показываем сразу, потому что листинг грузится асинхронно
-    // и умеет отменяться. Задержка только замораживала превью, пока
+    // каталоги показываем сразу, потому что листинг грузится асинхронно
+    // и умеет отменяться. задержка только замораживала превью, пока
     // пользователь ведёт фокус стрелками.
     std::error_code dirEc;
     if (std::filesystem::is_directory(path, dirEc)) {
@@ -1869,7 +1898,7 @@ void PreviewPane::previewPath(const std::filesystem::path& path) {
         return;
     }
 
-    // 2. попадание в LRU кэш в стиле Nautilus: если изображение уже декодировано и mtime/размер совпадают,
+    // 2. попадание в lru кэш в стиле nautilus: если изображение уже декодировано и mtime/размер совпадают,
     // подменяем его на месте за 0 мс без задержки debounce и обращений к диску
     if (hasStat) {
         for (auto it = m_imageCache.begin(); it != m_imageCache.end(); ++it) {
@@ -2029,7 +2058,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
             return;
         }
 
-        // случай 1.9: PDF, страницы рендерит pdftoppm в фоновом пуле
+        // случай 1.9: pdf, страницы рендерит pdftoppm в фоновом пуле
         if (Core::Search::isPdfFile(path)) {
             const int pages = Core::Thumbnails::pdfPageCount(path);
             if (!self || jobCounter->load() != jobId) return;
@@ -2040,7 +2069,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
             return;
         }
 
-        // случай 2: изображение или SVG файл
+        // случай 2: изображение или svg файл
         std::string ext = path.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
 
@@ -2065,8 +2094,8 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
                 if (renderer.isValid()) {
                     QSize defSize = renderer.defaultSize();
                     if (defSize.isEmpty()) defSize = QSize(400, 400);
-                    // Decompression bomb: width/height="100000" в SVG дали бы
-                    // QImage на десятки ГБ ещё до показа, не рендерим
+                    // decompression bomb: width/height="100000" в svg дали бы
+                    // qimage на десятки гб ещё до показа, не рендерим
                     static constexpr qint64 kMaxImagePixels = 16384LL * 16384LL;
                     if (qint64(defSize.width()) * qint64(defSize.height()) > kMaxImagePixels) {
                         const QString msg = QString("Image too large to preview: %1 x %2")
@@ -2100,8 +2129,8 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
                 QImageReader reader(QString::fromUtf8(path.c_str()));
                 reader.setAutoTransform(true);
                 QSize origSize = reader.size();
-                // Decompression bomb (сжатый PNG/JPEG может декодироваться в
-                // гигабайты ARGB): ограничиваем число пикселей до decode
+                // decompression bomb (сжатый png/jpeg может декодироваться в
+                // гигабайты argb): ограничиваем число пикселей до decode
                 static constexpr qint64 kMaxImagePixels = 16384LL * 16384LL;
                 if (origSize.isValid() &&
                     qint64(origSize.width()) * qint64(origSize.height()) > kMaxImagePixels) {
@@ -2124,7 +2153,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
 
                 if (!img.isNull()) {
                     const QSize originalSize = origSize.isValid() ? origSize : img.size();
-                    // некоторые плагины игнорируют setScaledSize для подстраховки
+                    // некоторые плагины игнорируют setscaledsize для подстраховки
                     if (img.width() > kPreviewMaxSide || img.height() > kPreviewMaxSide) {
                         img = img.scaled(boundedSize(img.size(), kPreviewMaxSide),
                                          Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -2220,7 +2249,7 @@ void PreviewPane::loadPathNow(const std::filesystem::path& path, bool skipPlugin
             return;
         }
 
-        // случай 4: превью текста / кода (лимит 512 KB)
+        // случай 4: превью текста / кода (лимит 512 kb)
         uintmax_t sizeBytes = std::filesystem::file_size(path, ec);
         if (ec) sizeBytes = 0;
         if (sizeBytes <= 512 * 1024) {

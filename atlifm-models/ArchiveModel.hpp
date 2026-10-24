@@ -9,8 +9,7 @@
 
 namespace Models {
 
-// Асинхронный загрузчик листинга архива. Дерево для показа строит
-// ArchiveTreeWidget: здесь остаются только данные и сводка.
+// асинхронный загрузчик листинга архива, дерево строит widget
 class ArchiveModel : public QObject {
     Q_OBJECT
 
@@ -18,8 +17,11 @@ public:
     explicit ArchiveModel(QObject* parent = nullptr);
     ~ArchiveModel() override;
 
-    // асинхронная загрузка через пул, повторный вызов для неизменившегося файла не перечитывает листинг
+    // асинхронная загрузка через пул
     void setArchive(const std::filesystem::path& archivePath);
+    void clear();
+    void setAllowPrompt(bool allow) { m_allowPrompt = allow; }
+    bool allowPrompt() const { return m_allowPrompt; }
     const std::filesystem::path& archivePath() const { return m_archivePath; }
 
     bool isLoading() const { return m_loading; }
@@ -34,7 +36,7 @@ public:
     quint64 totalSize() const { return m_totalSize; }
 
 signals:
-    // старый листинг сброшен, дерево должно очиститься до прихода loaded()
+    // старый листинг сброшен и дерево очищается до loaded
     void archiveReset();
     void loaded();
     void loadFailed(const QString& error);
@@ -49,9 +51,10 @@ private:
     bool m_loading{false};
     bool m_loaded{false};
     bool m_truncated{false};
+    bool m_allowPrompt{true};
     QString m_error;
 
-    // подпись файла (mtime/размер), setArchive для неизменившегося архива не перечитывает листинг
+    // подпись файла mtime и размер
     int64_t m_sigMtimeNs{-1};
     int64_t m_sigSize{-1};
 

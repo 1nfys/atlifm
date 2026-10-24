@@ -169,8 +169,8 @@ std::vector<DesktopApp> XdgUtils::getAppsForFile(const std::filesystem::path& pa
         }
     }
 
-    // GIO знает ассоциации из mimeapps.list, рекомендованные и добавленные вручную
-    // приложения, которых нет в MimeType=.desktop (например nvim/zed для .ts).
+    // gio знает ассоциации из mimeapps.list, рекомендованные и добавленные вручную
+    // приложения, которых нет в mimetype=.desktop (например nvim/zed для .ts).
     const QString gio = QStandardPaths::findExecutable("gio");
     if (!gio.isEmpty()) {
         QProcess proc;
@@ -224,7 +224,7 @@ const QStringList& desktopAppDirs() {
     return dirs;
 }
 
-// разбор одного .desktop: Name/Exec/Icon/Type из [Desktop Entry]
+// разбор одного .desktop: name/exec/icon/type из [desktop entry]
 std::optional<DesktopApp> parseDesktopAppFile(const std::filesystem::path& filePath) {
     QFile f(QString::fromUtf8(filePath.c_str()));
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return std::nullopt;
@@ -308,7 +308,7 @@ DesktopApp XdgUtils::getDefaultAppForFile(const std::filesystem::path& path) {
         }
     }
 
-    // 2) [Default Applications] из mimeapps.list: пользовательские, затем системные
+    // 2) [default applications] из mimeapps.list: пользовательские, затем системные
     const QStringList listPaths = {
         QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/mimeapps.list",
         QDir::homePath() + "/.local/share/applications/mimeapps.list",
@@ -358,7 +358,7 @@ bool XdgUtils::setDefaultAppForFile(const std::filesystem::path& path,
     QDir().mkpath(configDir);
     const QString listPath = configDir + "/mimeapps.list";
 
-    // точечная правка: заменяем или добавляем mime=id в [Default Applications],
+    // точечная правка: заменяем или добавляем mime=id в [default applications],
     // остальное содержимое не трогаем
     QStringList lines;
     {
@@ -419,7 +419,7 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
         if (QProcess::startDetached("gtk-launch", {QString::fromUtf8(path.filename().c_str())})) return true;
     }
 
-    // 2. исполняемые бинарники, скрипты, AppImage
+    // 2. исполняемые бинарники, скрипты, appimage
     QFileInfo fi(qpath);
     if (fi.isExecutable() && !fi.isDir()) {
         if (ext == ".appimage" || ext == ".sh" || ext == ".bin" || ext == ".run" || ext.empty()) {
@@ -429,7 +429,7 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
         }
     }
 
-    // 3. стандартный запускатель приложений FreeDesktop в Linux: gio open
+    // 3. стандартный запускатель приложений freedesktop в linux: gio open
     if (QProcess::startDetached("gio", {"open", qpath})) {
         return true;
     }
@@ -439,11 +439,11 @@ bool XdgUtils::openWithDefault(const std::filesystem::path& path) {
         return true;
     }
 
-    // 5. откат к Qt DesktopServices
+    // 5. откат к qt desktopservices
     return QDesktopServices::openUrl(QUrl::fromLocalFile(qpath));
 }
 
-// выполнение через splitCommand без sh c и без инъекции команд
+// выполнение через splitcommand без sh c и без инъекции команд
 bool XdgUtils::openWithApp(const DesktopApp& app, const std::filesystem::path& path) {
     QString cmd = app.execCommand;
     QString filePath = QString::fromUtf8(path.c_str());
@@ -524,7 +524,7 @@ QStringList wrapForTerminal(const QString& term, const QStringList& cmd) {
 }
 
 // неблокирующее ожидание процесса: sudo или запрос пароля могут держать
-// процесс десятки секунд, а GUI обязан перерисовываться, поэтому не waitForFinished()
+// процесс десятки секунд, а gui обязан перерисовываться, поэтому не waitforfinished()
 bool waitForProcResponsive(QProcess& proc, int timeoutMs) {
     if (proc.state() == QProcess::NotRunning) return true;
     QEventLoop loop;
@@ -539,7 +539,7 @@ bool waitForProcResponsive(QProcess& proc, int timeoutMs) {
     return !timedOut && proc.exitStatus() == QProcess::NormalExit;
 }
 
-// sudo доступен без пароля (NOPASSWD или живой кэш тикета)? ожидание неблокирующее
+// sudo доступен без пароля (nopasswd или живой кэш тикета)? ожидание неблокирующее
 bool sudoProbe(int timeoutMs, QString* outErr = nullptr) {
     if (outErr) outErr->clear();
     if (::geteuid() == 0) return true;
@@ -568,7 +568,7 @@ QString currentUserName() {
 }
 
 // побайтовое копирование потока с отменой и прогрессом; false при отмене
-// или ошибке записи, текст в errorMsg
+// или ошибке записи, текст в errormsg
 bool copyStream(std::istream& in, std::ostream& out,
                 const std::function<bool()>& isCancelled,
                 const std::function<void(uintmax_t)>& onProgress,
@@ -596,7 +596,7 @@ bool copyStream(std::istream& in, std::ostream& out,
 }
 
 // строка диагностики авторизации sudo в лог файл
-// файл усечётся при росте > 64 КБ, пароли сюда не попадают
+// файл усечётся при росте > 64 кб, пароли сюда не попадают
 void XdgUtils::sudoDebugLog(const QString& line) {
     const QString dir = QDir::homePath() + QStringLiteral("/.cache/atlifm");
     QDir().mkpath(dir);
@@ -639,7 +639,7 @@ QString XdgUtils::resolveTrustedExe(const QString& bare) {
 QStringList XdgUtils::pkexecArgs(const QStringList& cmd) {
     if (cmd.isEmpty()) return cmd;
     // pkexec требует полный путь к программе: резолвим из доверенных
-    // системных каталогов, а не из PATH пользователя, т.к. подмена бинарника
+    // системных каталогов, а не из path пользователя, т.к. подмена бинарника
     // в пользовательском каталоге даёт запуск от root
     QString exe = XdgUtils::resolveTrustedExe(cmd.first());
     if (exe.isEmpty()) exe = cmd.first();
@@ -649,7 +649,7 @@ QStringList XdgUtils::pkexecArgs(const QStringList& cmd) {
 }
 
 // разовый запуск готовой команды (argv целиком) с ожиданием ответа, не
-// блокирующим GUI; true при нормальном завершении процесса
+// блокирующим gui; true при нормальном завершении процесса
 bool XdgUtils::runCommand(const QStringList& argv, int timeoutMs, QByteArray* out,
                           QString* outErr, int* outExitCode) {
     if (argv.isEmpty()) return false;
@@ -696,7 +696,7 @@ bool XdgUtils::sudoApplyPassword(const QString& password, QString& outError) {
                          .arg(invalidate.exitCode()).arg(invErr));
     }
 
-    // после сброса кэша sudo S v реально проверяет пароль а успех
+    // после сброса кэша sudo s v реально проверяет пароль а успех
     // создает свежий тикет для всех sudo операций приложения
     QProcess sudoProc;
     sudoProc.start("sudo", {"-S", "-v"});
@@ -740,16 +740,16 @@ bool XdgUtils::sudoApplyPassword(const QString& password, QString& outError) {
     }
     sudoDebugLog(QStringLiteral("apply: OK"));
 
-    // тикет создан: все привилегированные вызовы (rootArgs) идут через
+    // тикет создан: все привилегированные вызовы (rootargs) идут через
     // sudo без повторных вопросов пока тикет жив
     return true;
 }
 
 // инлайн авторизация привилегированного действия (попап пароля):
-// живой тикет молча true, иначе пароль из TuiInputPopup → sudoApplyPassword
-// правила NOPASSWD не пишутся (антипаттерн: правило подавляет пароль и
+// живой тикет молча true, иначе пароль из tuiinputpopup и sudoapplypassword
+// правила nopasswd не пишутся (антипаттерн: правило подавляет пароль и
 // ломает путь полкита), системный диалог полкита здесь не показывается,
-// для действия с одним системным диалогом есть pkexecArgs()
+// для действия с одним системным диалогом есть pkexecargs()
 bool XdgUtils::ensureSudoAuthenticated(QWidget* parentWidget, QString& outError) {
     outError.clear();
     if (::geteuid() == 0) return true;
@@ -765,7 +765,7 @@ bool XdgUtils::ensureSudoAuthenticated(QWidget* parentWidget, QString& outError)
     sudoDebugLog(QStringLiteral("ensure: euid=%1").arg(::geteuid()));
 
     // тикет уже жив, диалог не нужен; таймаут 2.5 с с запасом для
-    // холодного старта sudo на ARM
+    // холодного старта sudo на arm
     const bool ticketAlive = sudoProbe(2500);
     sudoDebugLog(QStringLiteral("ensure: probe ticket_alive=%1").arg(ticketAlive ? 1 : 0));
     if (ticketAlive) return true;
@@ -788,8 +788,8 @@ bool XdgUtils::ensureSudoAuthenticated(QWidget* parentWidget, QString& outError)
         return false;
     }
 
-    // проверка пароля и тикет: общий код с инлайн полем Disk Usage
-    // (sudoApplyPassword)
+    // проверка пароля и тикет: общий код с инлайн полем disk usage
+    // (sudoapplypassword)
     const bool applied = sudoApplyPassword(pass, outError);
     pass.fill(QChar(0)); pass.clear();
     return applied;
@@ -815,7 +815,7 @@ bool XdgUtils::openFileWithSudo(const std::filesystem::path& path, QString& outE
     outError.clear();
     QString qpath = QString::fromUtf8(path.c_str());
 
-    // $EDITOR/$VISUAL запускаются от root, берём их только если такой
+    // $editor/$visual запускаются от root, берём их только если такой
     // бинарник реально существует
     auto isValidEditor = [](const QString& e) {
         if (e.trimmed().isEmpty()) return false;
@@ -864,7 +864,7 @@ bool XdgUtils::openFileWithSudo(const std::filesystem::path& path, QString& outE
 bool XdgUtils::openTerminalAt(const std::filesystem::path& dirPath) {
     QString targetDir = QString::fromUtf8(dirPath.c_str());
 
-    // сначала проверяем переменную окружения $TERMINAL
+    // сначала проверяем переменную окружения $terminal
     const char* envTerm = std::getenv("TERMINAL");
     if (envTerm && *envTerm != '\0') {
         QString termCmd = QString::fromUtf8(envTerm);
@@ -885,10 +885,10 @@ bool XdgUtils::openTerminalAt(const std::filesystem::path& dirPath) {
     return false;
 }
 
-// корзина: QFile::moveToTrash, затем gio trash, затем ручная FreeDesktop корзина
+// корзина: qfile::movetotrash, затем gio trash, затем ручная freedesktop корзина
 namespace {
-// кэш листингов root: пишут авторизованный find (Sudo Open) и мутации
-// (sudoFileOp), читает фоновый скан FileSystemModel из QThreadPool, поэтому QMutex
+// кэш листингов root: пишут авторизованный find (sudo open) и мутации
+// (sudofileop), читает фоновый скан filesystemmodel из qthreadpool, поэтому qmutex
 struct SudoListingCache {
     QMutex mutex;
     QHash<QString, QString> listings;
@@ -973,14 +973,14 @@ void XdgUtils::invalidateSudoListingsUnder(const std::filesystem::path& dir) {
     }
 }
 
-// разбор рекурсивного вывода find ("%y\t%s\t%T@\t%m\t%p\0"): пересборка
+// разбор рекурсивного вывода find ("%y\t%s\t%t@\t%m\t%p\0"): пересборка
 // записей в формат одиночного листинга (%f) и группировка по родителям
 // имя может содержать табы, поэтому путь это всё после пятого \t; обрыв
-// вывода без финального NUL отбрасывается, недозаписанный путь в кэш не
+// вывода без финального nul отбрасывается, недозаписанный путь в кэш не
 // должен попасть
 void XdgUtils::provideSudoListingTree(const std::filesystem::path& root, const QString& recursiveOutput) {
     const QChar nul(QLatin1Char('\0'));
-    QHash<QString, QString> groups; // sudoListingKey(parent) → записи этого каталога
+    QHash<QString, QString> groups; // sudolistingkey(parent) и записи этого каталога
     QSet<QString> dirKeys;          // все встреченные каталоги (включая пустые)
     int pos = 0;
     while (pos < recursiveOutput.size()) {
@@ -1047,7 +1047,7 @@ XdgUtils::SudoListStatus XdgUtils::sudoListTree(const std::filesystem::path& dir
     if (!finished) return SudoListStatus::Failed;
     if (exitCode == 126 || exitCode == 127) return SudoListStatus::Dismissed;
     if (exitCode == 0 || !out.isEmpty()) return SudoListStatus::Ok;
-    // пустой вывод и ненулевой код: консервативно Failed
+    // пустой вывод и ненулевой код: консервативно failed
     return SudoListStatus::Failed;
 }
 
@@ -1124,7 +1124,7 @@ bool XdgUtils::moveToTrash(const std::vector<std::filesystem::path>& paths, QStr
 
     for (const auto& p : paths) {
         QString qpath = QString::fromUtf8(p.c_str());
-        // 1. стандартный механизм корзины Qt
+        // 1. стандартный механизм корзины qt
         QString inTrash;
         if (QFile::moveToTrash(qpath, &inTrash)) {
             if (outMoved && !inTrash.isEmpty()) {
@@ -1145,7 +1145,7 @@ bool XdgUtils::moveToTrash(const std::vector<std::filesystem::path>& paths, QStr
             continue;
         }
 
-        // 3. откат: ручная корзина по спецификации FreeDesktop Trash
+        // 3. откат: ручная корзина по спецификации freedesktop trash
         const char* home = std::getenv("HOME");
         if (!home) {
             errorMsg = "HOME directory not found.";
@@ -1194,7 +1194,7 @@ bool XdgUtils::moveToTrash(const std::vector<std::filesystem::path>& paths, QStr
     return true;
 }
 
-// ec в remove_all/create_directories, чтобы не падать на EACCES
+// ec в remove_all/create_directories, чтобы не падать на eacces
 bool XdgUtils::clearTrash() {
     const char* home = std::getenv("HOME");
     if (!home) return false;
@@ -1296,7 +1296,7 @@ bool XdgUtils::moveItem(const std::filesystem::path& src, const std::filesystem:
     std::error_code ec;
     std::filesystem::rename(src, dest, ec);
     if (ec) {
-        // откат при переносе между устройствами (EXDEV): копируем, затем удаляем источник
+        // откат при переносе между устройствами (exdev): копируем, затем удаляем источник
         if (ec == std::make_error_code(std::errc::cross_device_link)) {
             QString copyErr;
             if (copyItem(src, dest, copyErr, progressCallback, cancelToken)) {
@@ -1351,7 +1351,7 @@ bool XdgUtils::copyItem(const std::filesystem::path& src, const std::filesystem:
         errno = 0;
         std::ifstream in(src, std::ios::binary);
         if (!in) {
-            // sudo фолбэк, если источник нечитаем без root (только EACCES/
+            // sudo фолбэк, если источник нечитаем без root (только eacces/
             // cp a и свежий листинг одним вызовом
             const int openErrno = errno;
             if (openErrno == EACCES || openErrno == EPERM) {
@@ -1370,7 +1370,7 @@ bool XdgUtils::copyItem(const std::filesystem::path& src, const std::filesystem:
         std::ofstream out(dest, std::ios::binary | std::ios::trunc);
         if (!out) {
             // sudo фолбэк, если каталог назначения защищён root
-            // (только EACCES/EPERM, прочие ошибки не повод спрашивать пароль)
+            // (только eacces/eperm, прочие ошибки не повод спрашивать пароль)
             const int openErrno = errno;
             if (openErrno == EACCES || openErrno == EPERM) {
                 QString sudoErr;
@@ -1408,7 +1408,7 @@ bool XdgUtils::copyItem(const std::filesystem::path& src, const std::filesystem:
 
         return true;
     } else {
-        // проверка cancelToken на каждом файле: std::filesystem::copy()
+        // проверка canceltoken на каждом файле: std::filesystem::copy()
         // нельзя прервать извне
         auto isCancelled = [&]() { return cancelToken && cancelToken->load(); };
         if (isCancelled()) {
@@ -1599,26 +1599,6 @@ QString archivePasswordError() {
     return QStringLiteral("Archive password is required.");
 }
 
-QMutex& archivePasswordMutex() {
-    static QMutex mutex;
-    return mutex;
-}
-
-QHash<QString, QString>& archivePasswordCache() {
-    static QHash<QString, QString> cache;
-    return cache;
-}
-
-QString cachedArchivePassword(const QString& archivePath) {
-    QMutexLocker lock(&archivePasswordMutex());
-    return archivePasswordCache().value(archivePath);
-}
-
-void rememberArchivePassword(const QString& archivePath, const QString& password) {
-    QMutexLocker lock(&archivePasswordMutex());
-    archivePasswordCache().insert(archivePath, password);
-}
-
 QString archivePasswordArg(const QString& password) {
     return password.isEmpty() ? archiveDummyPassword() : password;
 }
@@ -1697,7 +1677,7 @@ bool runFirstSuccessful(const std::vector<ArchiveCmd>& cmds, QString& errorMsg,
         }
         if (runAndWait(proc, errorMsg, cancelToken)) return true;
         if (cancelToken && cancelToken->load()) return false;
-        // GNU tar/7z сами начинают stderr с «<программа>:», не дублируем
+        // gnu tar/7z сами начинают stderr с «<программа>:», не дублируем
         const QString detail = errorMsg.trimmed();
         const QString progName = QFileInfo(cmd.program).fileName();
         if (detail.startsWith(cmd.program + ":") || detail.startsWith(progName + ":"))
@@ -1715,11 +1695,10 @@ using ArchiveCmdBuilder = std::function<std::vector<ArchiveCmd>(const QString&)>
 bool runArchiveCommand(const QString& archivePath, const ArchiveCmdBuilder& buildCmds,
                        QString& errorMsg,
                        const std::shared_ptr<std::atomic_bool>& cancelToken) {
-    QString password = cachedArchivePassword(archivePath);
+    QString password;
     for (int attempt = 0; attempt < 3; ++attempt) {
         if (runFirstSuccessful(buildCmds(password), errorMsg, cancelToken)) {
             errorMsg.clear();
-            if (!password.isEmpty()) rememberArchivePassword(archivePath, password);
             return true;
         }
         if (cancelToken && cancelToken->load()) return false;
@@ -1748,8 +1727,8 @@ bool compressStreamToFile(const QString& prog, const QStringList& args,
         errorMsg = proc.errorString();
         return false;
     }
-    // сжатый вывод пишет прямо в файл, иначе QProcess сначала буферизует
-    // его целиком (гигабайты RAM на больших файлах)
+    // сжатый вывод пишет прямо в файл, иначе qprocess сначала буферизует
+    // его целиком (гигабайты ram на больших файлах)
     QFile out(destStr);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         errorMsg = out.errorString();
@@ -1818,7 +1797,7 @@ bool XdgUtils::isSingleStreamArchive(const std::filesystem::path& path) {
 }
 
 std::filesystem::path XdgUtils::archiveExtractDirName(const std::filesystem::path& archivePath) {
-    // a.tar.gz → a, b.zip → b, c → c (самый длинный суффикс срезается один раз)
+    // a.tar.gz и a, b.zip и b, c и c (самый длинный суффикс срезается один раз)
     QString name = QString::fromUtf8(archivePath.filename().c_str());
     const QString lower = name.toLower();
     static const char* kSufs[] = {".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz4", ".tar.lzma",
@@ -2176,7 +2155,8 @@ bool XdgUtils::extractArchiveEntries(const std::filesystem::path& archivePath,
 
 bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
                            std::vector<ArchiveEntry>& outEntries,
-                           bool& outTruncated, QString& outError) {
+                           bool& outTruncated, QString& outError,
+                           bool allowPrompt) {
     outEntries.clear();
     outTruncated = false;
     outError.clear();
@@ -2213,7 +2193,7 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
         return QStringList{"l", "-slt", "-ba", "-p" + pw, "--", arcStr};
     };
 
-    QString password = cachedArchivePassword(arcStr);
+    QString password;
     QByteArray raw;
     bool outputOverflow = false;
     for (int attempt = 0; ; ++attempt) {
@@ -2261,6 +2241,10 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
             outError = QString::fromUtf8(proc.readAllStandardError()).trimmed();
             if (outError.isEmpty()) outError = "listing failed";
             if (!looksLikePasswordError(outError)) return false;
+            if (!allowPrompt) {
+                outError = archivePasswordError();
+                return false;
+            }
             if (attempt >= 2) {
                 outError = QStringLiteral("Wrong archive password.");
                 return false;
@@ -2272,7 +2256,6 @@ bool XdgUtils::listArchive(const std::filesystem::path& archivePath,
             }
             continue;
         }
-        if (!password.isEmpty()) rememberArchivePassword(arcStr, password);
         outError.clear();
         break;
     }

@@ -448,7 +448,7 @@ void NativePluginHost::onSessionProcessFinished(quint64 generation) {
     tryFinishSession();
 }
 
-// C ABI
+// c abi
 
 const char* NativePluginHost::apiVersion() {
     return "1.0.1";

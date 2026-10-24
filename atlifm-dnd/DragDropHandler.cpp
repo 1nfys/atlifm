@@ -71,7 +71,7 @@ static uintmax_t contentSizeBytes(const std::filesystem::path& p,
     return total;
 }
 
-// targetDir внутри src уводит рекурсивный copyItem в бесконечную рекурсию,
+// targetdir внутри src уводит рекурсивный copyitem в бесконечную рекурсию,
 // поэтому сравнение лексическое без canonical (может висеть на недоступных каталогах)
 static bool isSelfOrDescendant(const std::filesystem::path& targetDir,
                                const std::filesystem::path& src) {
@@ -85,7 +85,7 @@ static bool isSelfOrDescendant(const std::filesystem::path& targetDir,
 }
 
 // откат завершённых элементов делает только воркер как владелец операции,
-// иначе UI гонял бы rename'ы по тем же путям параллельно с копированием
+// иначе ui гонял бы rename'ы по тем же путям параллельно с копированием
 static void rollbackCompletedItems(const std::vector<Core::UndoItem>& items) {
     for (const auto& item : items) {
         std::error_code ec;
@@ -115,7 +115,7 @@ void DragDropHandler::cancelActiveOperation() {
         s_cancelToken->store(true);
     }
     // откат и сброс токена делает воркер: новая операция не стартует,
-    // пока executeCopyMove видит живой отменённый токен
+    // пока executecopymove видит живой отменённый токен
 }
 
 QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& paths, QWidget* dragSource) {
@@ -141,7 +141,7 @@ QDrag* DragDropHandler::createDrag(const std::vector<std::filesystem::path>& pat
 
     // стандартный uri list и file transfer из портала xdg для браузеров и приложений
     mimeData->setUrls(urls);
-    // совместимость с GTK / Nautilus / Thunar / Nemo
+    // совместимость с gtk / nautilus / thunar / nemo
     mimeData->setData("x-special/gnome-copied-files", gnomeCopiedData.trimmed());
 
     drag->setMimeData(mimeData);
@@ -553,11 +553,11 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
         stem = "image_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss").toUtf8().toStdString();
     }
 
-    // 2. uri data:image/... или байты изображения из браузера, чата с ИИ или буфера обмена
+    // 2. uri data:image/... или байты изображения из браузера, чата с ии или буфера обмена
     QByteArray imageBytes;
     std::string imageExt = hintExt.empty() ? ".png" : hintExt;
 
-    // 2a. проверка data:image/ в URL, HTML <img src> или обычном тексте
+    // 2a. проверка data:image/ в url, html <img src> или обычном тексте
     if (mimeData->hasUrls()) {
         for (const auto& u : mimeData->urls()) {
             if (tryDecodeDataUri(u.toString(), imageBytes, imageExt)) break;
@@ -571,7 +571,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
         tryDecodeDataUri(mimeData->text(), imageBytes, imageExt);
     }
 
-    // 2b. проверка прямых MIME форматов изображения (сохраняет исходные байты PNG/JPEG/WebP/GIF/SVG)
+    // 2b. проверка прямых mime форматов изображения (сохраняет исходные байты png/jpeg/webp/gif/svg)
     if (imageBytes.isEmpty()) {
         struct MimePair {
             const char* mime;
@@ -588,7 +588,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
             {"image/bmp",     ".bmp"}
         };
 
-        // предпочитаем подходящий hintExt, если он доступен в mimeData
+        // предпочитаем подходящий hintext, если он доступен в mimedata
         if (!hintExt.empty()) {
             for (const auto& fp : kFormats) {
                 if (hintExt == fp.ext && mimeData->hasFormat(QString::fromLatin1(fp.mime))) {
@@ -616,7 +616,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
         }
     }
 
-    // 2c. запасной вариант QMimeData::imageData() (QImage)
+    // 2c. запасной вариант qmimedata::imagedata() (qimage)
     if (imageBytes.isEmpty() && mimeData->hasImage()) {
         QImage img = qvariant_cast<QImage>(mimeData->imageData());
         if (!img.isNull()) {
@@ -645,7 +645,7 @@ bool DragDropHandler::handleMimeDrop(const QMimeData* mimeData,
         }
     }
 
-    // 3. проверка удалённого URL http:// или https://, сброшенного из браузера (изображение или ссылка на файл)
+    // 3. проверка удалённого url http:// или https://, сброшенного из браузера (изображение или ссылка на файл)
     QString remoteUrlStr;
     if (mimeData->hasFormat("application/x-moz-file-promise-url")) {
         QByteArray d = mimeData->data("application/x-moz-file-promise-url");
@@ -963,7 +963,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
             QStringLiteral("io"),
             [items = itemsToProcess, chosenAction, safeParent, onFinished, cancelToken](Core::Tasks::TaskContext& ctx) {
             // обход дерева для подсчета размера это тоже нагрузка поэтому считаем в воркере,
-            // иначе первый кадр задачи блокирует UI на большом каталоге.
+            // иначе первый кадр задачи блокирует ui на большом каталоге.
             uintmax_t totalBytes = 0;
             std::vector<uintmax_t> itemBytes(items.size(), 0);
             for (size_t i = 0; i < items.size(); ++i) {
@@ -993,7 +993,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                     backup = Core::stashForUndo(dest);
                 }
 
-                auto progressCb = [&](uintmax_t itemCopied, uintmax_t /*itemTotal*/) {
+                auto progressCb = [&](uintmax_t itemCopied, uintmax_t /*itemtotal*/) {
                     if (ctx.cancelled() || cancelToken->load()) return;
                     progressMessage(overallCopiedBytes + itemCopied);
                 };
@@ -1010,7 +1010,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 if (ctx.cancelled() || cancelToken->load()) break;
 
                 if (ok) {
-                    // локальный undoItems полный список и для undo, и для отката отмены
+                    // локальный undoitems полный список и для undo, и для отката отмены
                     // (включая элементы, докатившиеся после cancel)
                     undoItems.push_back({src, dest, backup});
                     overallCopiedBytes += itemBytes[i];
@@ -1032,7 +1032,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
 
             const bool wasCancelled = ctx.cancelled() || cancelToken->load();
             if (wasCancelled) {
-                // откат выполняет воркер: undoItems полный список завершённых,
+                // откат выполняет воркер: undoitems полный список завершённых,
                 // токен ещё жив и новая операция не стартует до конца отката
                 rollbackCompletedItems(undoItems);
             } else if (!lastErr.isEmpty()) {
@@ -1042,7 +1042,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
             {
                 std::lock_guard<std::mutex> lock(s_opMutex);
                 // гасим токен только если это наша операция: у новой в
-                // s_cancelToken уже лежит свой токен
+                // s_canceltoken уже лежит свой токен
                 if (s_cancelToken == cancelToken) {
                     s_cancelToken.reset();
                 }
@@ -1112,7 +1112,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
     for (const auto& src : sources) {
         if (src == targetDir) continue;
 
-        // каталог внутрь себя уводит copyItem в бесконечную рекурсию,
+        // каталог внутрь себя уводит copyitem в бесконечную рекурсию,
         // пропускаем с сообщением иначе зависание и мусор на диске
         std::error_code dirEc;
         if (std::filesystem::is_directory(src, dirEc) && isSelfOrDescendant(targetDir, src)) {
@@ -1128,7 +1128,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
 
         if (isSameDir) {
             // copy в ту же папку обязан создать копию с суффиксом stem_1.ext,
-            // иначе paste молча ничего не делает (руководство §5.3E)
+            // иначе paste молча ничего не делает (руководство §5.3e)
             if (chosenAction == ActCopy) {
                 std::filesystem::path dest = generateCopyName(src, targetDir);
                 nonConflicts.push_back({src, dest});
@@ -1175,7 +1175,7 @@ void DragDropHandler::handleDrop(const std::vector<std::filesystem::path>& sourc
                 executeCopyMove(finalItems);
             });
     } else {
-        // previewPane недостижим (дроп из сайдбара/табов/chooser):
+        // previewpane недостижим (дроп из сайдбара/табов/chooser):
         // skip пропускает конфликты, переносится только остальное
         const bool replaceAll = Widgets::TuiConfirmPopup::ask(
             parentWidget,

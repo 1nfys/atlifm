@@ -26,7 +26,7 @@ public:
     static QString getMimeType(const std::filesystem::path& path);
     static std::vector<DesktopApp> getAppsForFile(const std::filesystem::path& path);
 
-    // все установленные приложения из .desktop (NoDisplay/Hidden пропускаются)
+    // все установленные приложения из .desktop (nodisplay/hidden пропускаются)
     static std::vector<DesktopApp> getAllApps();
 
     // дефолтный хэндлер: сначала xdg mime query default а затем mimeapps list
@@ -86,7 +86,7 @@ public:
                            const std::filesystem::path& listingDir,
                            QString& outError, QWidget* parentWidget = nullptr);
 
-    // валидация пароля sudo через сброс кэша и проверку ключом S v
+    // валидация пароля sudo через сброс кэша и проверку ключом s v
     static bool sudoApplyPassword(const QString& password, QString& outError);
 
     static void cleanupSudoSession();
@@ -136,7 +136,8 @@ public:
     // листинг файлов архива для превью с защитой от переполнения памяти
     static bool listArchive(const std::filesystem::path& archivePath,
                             std::vector<ArchiveEntry>& outEntries,
-                            bool& outTruncated, QString& outError);
+                            bool& outTruncated, QString& outError,
+                            bool allowPrompt = true);
 
     static bool copyItem(const std::filesystem::path& src, const std::filesystem::path& dest, QString& outError,
                          std::function<void(uintmax_t bytesCopied, uintmax_t totalBytes)> progressCallback = nullptr,

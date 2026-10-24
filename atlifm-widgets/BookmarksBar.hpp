@@ -45,7 +45,7 @@ signals:
                       const std::filesystem::path& targetDir,
                       Qt::DropAction action,
                       Qt::KeyboardModifiers modifiers);
-    // действия меню ПКМ вынесены в сигналы: окно сначала даёт плагину перехватить, потом выполняет встроенное поведение
+    // действия меню пкм вынесены в сигналы: окно сначала даёт плагину перехватить, потом выполняет встроенное поведение
     void copyPathRequested(const std::filesystem::path& path);
     void removeBookmarkRequested(const std::filesystem::path& path);
     void trashClearRequested();
