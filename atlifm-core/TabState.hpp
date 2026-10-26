@@ -25,12 +25,15 @@ struct TabState {
     QString filterQuery;
 
     void navigateTo(const std::filesystem::path& newPath) {
-        if (newPath == currentPath) return;
+        std::error_code ec;
+        std::filesystem::path canon = std::filesystem::canonical(std::filesystem::absolute(newPath), ec);
+        if (ec) canon = newPath;
+        if (canon == currentPath) return;
         if (!currentPath.empty()) {
             backHistory.push_back(currentPath);
         }
         forwardHistory.clear();
-        currentPath = newPath;
+        currentPath = canon;
         selectedItem.clear();
         selectedPaths.clear();
         currentRow = 0;

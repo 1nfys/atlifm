@@ -946,13 +946,21 @@ void MillerViewContainer::setupUi() {
                 sm->clearSelection();
             }
         }
-        // восстанавливаем курсор: сначала сохранённый путь, иначе последняя известная строка
+        // восстанавливаем курсор: сначала отложенный путь (если переходим в каталог или поднимаемся),
+        // затем сохранённый путь текущего каталога, иначе последняя известная строка
         int restoreRow = -1;
-        if (!m_savedCurrentPath.isEmpty()) {
+        if (!m_pathToSelectAfterRefresh.empty()) {
+            restoreRow = m_centerModel->findRowByPath(m_pathToSelectAfterRefresh);
+            if (restoreRow >= 0) {
+                m_pathToSelectAfterRefresh.clear();
+                m_pendingSelectRetries = 0;
+            }
+        }
+        if (restoreRow < 0 && !m_savedCurrentPath.isEmpty()) {
             restoreRow = m_centerModel->findRowByPath(
                 std::filesystem::path(m_savedCurrentPath.toUtf8().toStdString()));
         }
-        if (restoreRow < 0 && m_centerModel->rowCount() > 0) {
+        if (restoreRow < 0 && m_centerModel->rowCount() > 0 && m_pathToSelectAfterRefresh.empty()) {
             restoreRow = std::clamp(m_lastKnownRow, 0, m_centerModel->rowCount() - 1);
         }
         if (restoreRow >= 0 && sm) {
@@ -961,8 +969,11 @@ void MillerViewContainer::setupUi() {
             if (selPaths.size() <= 1) {
                 sm->select(ri, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             }
+            m_centerView->scrollTo(ri, QAbstractItemView::PositionAtCenter);
+            updateCenterSelection();
+        } else if (m_pathToSelectAfterRefresh.empty()) {
+            updateCenterSelection();
         }
-        updateCenterSelection();
     });
 
     // подключения навигации центральной панели
@@ -976,11 +987,7 @@ void MillerViewContainer::setupUi() {
         if (m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path()) {
             const auto exitedDir = m_currentDir;
             const auto parentDir = exitedDir.parent_path();
-            // сначала переключаем каталог, потому что setdirectory() сбрасывает
-            // отложенный выбор. потом просим выделить папку, из которой поднялись,
-            // чтобы right вернул обратно.
-            setDirectory(parentDir);
-            selectPathAfterRefresh(exitedDir);
+            setDirectory(parentDir, exitedDir);
         }
     });
     connect(m_centerView, &MillerListView::navigateHistoryBackRequested, this, &MillerViewContainer::navigateHistoryBackRequested);
@@ -1217,44 +1224,65 @@ void MillerViewContainer::setupUi() {
     // уведомления о загрузке модели
     connect(m_centerModel, &Models::FileSystemModel::loadingFinished, this, [this](int count) {
         updateCenterDeniedOverlay(count);
-        if (!m_pathToSelectAfterRefresh.empty()) {
-            if (selectAndFocusPath(m_pathToSelectAfterRefresh)) {
-                m_pathToSelectAfterRefresh.clear();
-                m_pendingSelectRetries = 0;
-            } else if (m_pendingSelectRetries > 0) {
-                // путь ещё не появился (переименование, фильтр): повторяем ограниченное
-                // число раз, refresh снова придёт в loadingfinished
-                --m_pendingSelectRetries;
-                m_centerModel->refresh();
-            } else {
-                m_pathToSelectAfterRefresh.clear();
-            }
-            return;
-        }
-
         if (count > 0) {
-            // сохраняем фокус при фоновых обновлениях: восстанавливаем выделение qt
-            // для явно выбранных строк, иначе держим текущую строку вместо прыжка на строку 0
-            auto selPaths = m_centerModel->selectedPaths();
-            if (selPaths.size() > 1 && m_centerView->selectionModel()) {
-                // повторно применяем визуальное выделение qt для мультивыбора, стёртого resetmodel
-                QItemSelection qs;
-                int firstValidRow = -1;
-                for (const auto& sp : selPaths) {
-                    int r = m_centerModel->findRowByPath(sp);
-                    if (r >= 0) {
-                        if (firstValidRow < 0) firstValidRow = r;
-                        qs.select(m_centerModel->index(r, 0), m_centerModel->index(r, 0));
+            bool handled = false;
+            if (!m_pathToSelectAfterRefresh.empty()) {
+                int row = m_centerModel->findRowByPath(m_pathToSelectAfterRefresh);
+                if (row >= 0) {
+                    m_pathToSelectAfterRefresh.clear();
+                    m_pendingSelectRetries = 0;
+                    const QModelIndex targetIdx = m_centerModel->index(row, 0);
+                    m_centerView->setCurrentIndex(targetIdx);
+                    m_centerView->scrollTo(targetIdx, QAbstractItemView::PositionAtCenter);
+
+                    auto selPaths = m_centerModel->selectedPaths();
+                    if (selPaths.size() > 1 && m_centerView->selectionModel()) {
+                        QItemSelection qs;
+                        for (const auto& sp : selPaths) {
+                            int r = m_centerModel->findRowByPath(sp);
+                            if (r >= 0) {
+                                qs.select(m_centerModel->index(r, 0), m_centerModel->index(r, 0));
+                            }
+                        }
+                        m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                    } else if (m_centerView->selectionModel()) {
+                        m_centerView->selectionModel()->select(targetIdx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                    }
+                    handled = true;
+                } else if (m_pendingSelectRetries > 0) {
+                    --m_pendingSelectRetries;
+                    m_centerModel->refresh();
+                    return;
+                } else {
+                    m_pathToSelectAfterRefresh.clear();
+                }
+            }
+
+            if (!handled) {
+                auto selPaths = m_centerModel->selectedPaths();
+                if (selPaths.size() > 1 && m_centerView->selectionModel()) {
+                    // повторно применяем визуальное выделение qt для мультивыбора, стёртого resetmodel
+                    QItemSelection qs;
+                    int firstValidRow = -1;
+                    for (const auto& sp : selPaths) {
+                        int r = m_centerModel->findRowByPath(sp);
+                        if (r >= 0) {
+                            if (firstValidRow < 0) firstValidRow = r;
+                            qs.select(m_centerModel->index(r, 0), m_centerModel->index(r, 0));
+                        }
+                    }
+                    if (!qs.isEmpty()) {
+                        if (!m_centerView->currentIndex().isValid() && firstValidRow >= 0) {
+                            m_centerView->selectionModel()->setCurrentIndex(
+                                m_centerModel->index(firstValidRow, 0), QItemSelectionModel::NoUpdate);
+                        }
+                        m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                        handled = true;
                     }
                 }
-                if (!qs.isEmpty()) {
-                    if (!m_centerView->currentIndex().isValid() && firstValidRow >= 0) {
-                        m_centerView->selectionModel()->setCurrentIndex(
-                            m_centerModel->index(firstValidRow, 0), QItemSelectionModel::NoUpdate);
-                    }
-                    m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-                }
-            } else if (!m_centerView->currentIndex().isValid()) {
+            }
+
+            if (!handled && !m_centerView->currentIndex().isValid()) {
                 // current сброшен при reset модели: восстанавливаем прежнюю строку
                 // с ограничением по новому количеству
                 int restoreRow = std::clamp(m_lastKnownRow, 0, count - 1);
@@ -1301,36 +1329,51 @@ void MillerViewContainer::setCurrentSudo(bool sudo) {
 void MillerViewContainer::restoreMultiSelection(const std::unordered_set<std::string>& paths, const std::filesystem::path& focusItem) {
     if (!m_centerModel) return;
     m_centerModel->setSelectedPaths(paths);
-    if (!paths.empty()) {
-        QItemSelection qs;
-        int focusRow = -1;
-        for (const auto& spStr : paths) {
-            std::filesystem::path sp(spStr);
-            int r = m_centerModel->findRowByPath(sp);
-            if (r >= 0) {
-                if (focusRow < 0 && sp == focusItem) focusRow = r;
-                qs.select(m_centerModel->index(r, 0), m_centerModel->index(r, 0));
+    if (!focusItem.empty()) {
+        m_pathToSelectAfterRefresh = focusItem;
+        m_pendingSelectRetries = 8;
+    } else if (!paths.empty()) {
+        m_pathToSelectAfterRefresh = std::filesystem::path(*paths.begin());
+        m_pendingSelectRetries = 8;
+    }
+
+    if (m_centerModel->rowCount() > 0) {
+        if (!paths.empty()) {
+            QItemSelection qs;
+            int focusRow = -1;
+            for (const auto& spStr : paths) {
+                std::filesystem::path sp(spStr);
+                int r = m_centerModel->findRowByPath(sp);
+                if (r >= 0) {
+                    if (focusRow < 0 && sp == focusItem) focusRow = r;
+                    qs.select(m_centerModel->index(r, 0), m_centerModel->index(r, 0));
+                }
             }
-        }
-        if (m_centerView->selectionModel()) {
-            if (focusRow >= 0) {
-                m_centerView->setCurrentIndex(m_centerModel->index(focusRow, 0));
-            } else if (!paths.empty()) {
-                int r = m_centerModel->findRowByPath(std::filesystem::path(*paths.begin()));
-                if (r >= 0) m_centerView->setCurrentIndex(m_centerModel->index(r, 0));
-            }
-            m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-        }
-        updateCenterSelection();
-    } else if (!focusItem.empty()) {
-        int r = m_centerModel->findRowByPath(focusItem);
-        if (r >= 0) {
-            QModelIndex idx = m_centerModel->index(r, 0);
-            m_centerView->setCurrentIndex(idx);
             if (m_centerView->selectionModel()) {
-                m_centerView->selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                if (focusRow >= 0) {
+                    const QModelIndex fIdx = m_centerModel->index(focusRow, 0);
+                    m_centerView->setCurrentIndex(fIdx);
+                    m_centerView->scrollTo(fIdx, QAbstractItemView::PositionAtCenter);
+                    m_pathToSelectAfterRefresh.clear();
+                    m_pendingSelectRetries = 0;
+                } else if (!paths.empty()) {
+                    int r = m_centerModel->findRowByPath(std::filesystem::path(*paths.begin()));
+                    if (r >= 0) {
+                        const QModelIndex fIdx = m_centerModel->index(r, 0);
+                        m_centerView->setCurrentIndex(fIdx);
+                        m_centerView->scrollTo(fIdx, QAbstractItemView::PositionAtCenter);
+                        m_pathToSelectAfterRefresh.clear();
+                        m_pendingSelectRetries = 0;
+                    }
+                }
+                m_centerView->selectionModel()->select(qs, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             }
             updateCenterSelection();
+        } else if (!focusItem.empty()) {
+            if (selectAndFocusPath(focusItem)) {
+                m_pathToSelectAfterRefresh.clear();
+                m_pendingSelectRetries = 0;
+            }
         }
     }
 }
@@ -1405,7 +1448,7 @@ void MillerViewContainer::saveSortForCurrentDir() {
     writeSavedSort(m_currentDir, m_centerModel->sortMode(), m_centerModel->isSortAscending());
 }
 
-void MillerViewContainer::setDirectory(const std::filesystem::path& path) {
+void MillerViewContainer::setDirectory(const std::filesystem::path& path, const std::filesystem::path& pathToSelect) {
     if (path.empty()) return;
     if (isArchiveViewActive()) leaveArchive();
     m_archiveSelectionActive = false;
@@ -1417,9 +1460,26 @@ void MillerViewContainer::setDirectory(const std::filesystem::path& path) {
         m_currentDir = path;
     }
 
-    // ожидаемый выбор от прошлой операции больше не актуален в новом каталоге
-    m_pathToSelectAfterRefresh.clear();
-    m_pendingSelectRetries = 0;
+    std::filesystem::path targetToSelect = pathToSelect;
+    if (!targetToSelect.empty()) {
+        std::filesystem::path canonTarget = std::filesystem::canonical(std::filesystem::absolute(targetToSelect), ec);
+        if (!ec) targetToSelect = canonTarget;
+    }
+    if (!targetToSelect.empty() && targetToSelect.parent_path() != m_currentDir && targetToSelect != m_currentDir) {
+        targetToSelect.clear();
+    }
+    if (targetToSelect.empty()) {
+        auto it = m_lastSelectedInDir.find(m_currentDir.string());
+        if (it != m_lastSelectedInDir.end()) {
+            targetToSelect = it->second;
+        }
+    }
+
+    m_pathToSelectAfterRefresh = targetToSelect;
+    m_pendingSelectRetries = targetToSelect.empty() ? 0 : 8;
+    if (targetToSelect.empty()) {
+        m_lastKnownRow = 0;
+    }
 
     // индикатор sudo только внутри каталога, открытого через "sudo open" (m_sudoroot),
     // либо там, где чтение реально требует root (restricted)
@@ -1487,6 +1547,25 @@ bool MillerViewContainer::hasGlobalSearch() const {
 
 void MillerViewContainer::focusCenter() {
     m_centerView->setFocus();
+}
+
+std::filesystem::path MillerViewContainer::focusedPath() const {
+    if (isArchiveViewActive()) return {};
+    if (m_centerView && m_centerView->currentIndex().isValid()) {
+        QString p = m_centerView->currentIndex().data(Models::FileSystemModel::PathRole).toString();
+        if (!p.isEmpty()) return std::filesystem::path(p.toUtf8().toStdString());
+    }
+    if (!m_pathToSelectAfterRefresh.empty()) {
+        return m_pathToSelectAfterRefresh;
+    }
+    auto sel = selectedPaths();
+    if (!sel.empty()) return sel.front();
+    return {};
+}
+
+std::unordered_set<std::string> MillerViewContainer::multiSelectedPaths() const {
+    if (isArchiveViewActive() || !m_centerModel) return {};
+    return m_centerModel->selectedPathsSet();
 }
 
 std::vector<std::filesystem::path> MillerViewContainer::selectedPaths() const {
@@ -1997,7 +2076,7 @@ bool MillerViewContainer::selectAndFocusPath(const std::filesystem::path& p) {
 }
 
 void MillerViewContainer::selectPathAfterRefresh(const std::filesystem::path& p) {
-    if (selectAndFocusPath(p)) {
+    if (m_centerModel && m_centerModel->currentDirectory() == m_currentDir && selectAndFocusPath(p)) {
         m_pathToSelectAfterRefresh.clear();
         m_pendingSelectRetries = 0;
         return;
@@ -2302,6 +2381,9 @@ void MillerViewContainer::updateCenterSelection() {
         m_lastKnownRow = curr.row();
         QString pathStr = curr.data(Models::FileSystemModel::PathRole).toString();
         std::filesystem::path p(pathStr.toUtf8().toStdString());
+        if (!hasGlobalSearch() && !m_currentDir.empty() && !p.empty()) {
+            m_lastSelectedInDir[m_currentDir.string()] = p;
+        }
         m_previewPane->previewPath(p);
         // соседние видео/pdf греются заранее; prefetch сам ограничивает очередь
         const int row = curr.row();

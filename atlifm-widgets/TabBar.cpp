@@ -30,7 +30,9 @@ EngineTabBar::EngineTabBar(QWidget* parent)
 int EngineTabBar::addTab(const std::filesystem::path& path, const QString& title) {
     Core::TabState tab;
     tab.id = m_nextTabId++;
-    tab.currentPath = path;
+    std::error_code ec;
+    tab.currentPath = std::filesystem::canonical(std::filesystem::absolute(path), ec);
+    if (ec) tab.currentPath = path;
     if (title.isEmpty()) {
         std::string fname = path.filename().string();
         tab.title = fname.empty() ? QString::fromUtf8(path.c_str()) : QString::fromUtf8(fname.c_str());

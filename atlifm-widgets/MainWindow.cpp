@@ -311,7 +311,7 @@ void MainWindow::setupUi() {
     // свойства из закладок и дисков тот же оверлей, что и пкм и properties
     connect(m_bookmarksBar, &BookmarksBar::propertiesRequested, this, &MainWindow::showPropertiesOverlay);
     connect(m_millerView, &MillerViewContainer::itemSelected, this, [this](const std::filesystem::path& p) {
-        if (m_tabBar && m_tabBar->currentIndex() >= 0 && m_tabBar->currentIndex() < m_tabBar->count()) {
+        if (!m_isSwitchingTab && m_tabBar && m_tabBar->currentIndex() >= 0 && m_tabBar->currentIndex() < m_tabBar->count()) {
             m_tabBar->currentTabState().selectedItem = p;
         }
     });
@@ -362,8 +362,9 @@ void MainWindow::setupUi() {
         if (m_millerView->tryPluginOverride(QStringLiteral("go_back"))) return;
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoBack()) {
+            auto exited = tab.currentPath;
             tab.goBack();
-            m_millerView->setDirectory(tab.currentPath);
+            m_millerView->setDirectory(tab.currentPath, exited);
         }
     });
     connect(m_millerView, &MillerViewContainer::navigateHistoryForwardRequested, this, [this]() {
@@ -1277,7 +1278,7 @@ void MainWindow::createKeybindShortcuts() {
         }
         const auto& cur = m_millerView->currentDirectory();
         if (cur.has_parent_path() && cur != cur.parent_path()) {
-            m_millerView->setDirectory(cur.parent_path());
+            m_millerView->setDirectory(cur.parent_path(), cur);
         }
     });
 
@@ -1289,8 +1290,9 @@ void MainWindow::createKeybindShortcuts() {
         }
         auto& tab = m_tabBar->currentTabState();
         if (tab.canGoBack()) {
+            auto exited = tab.currentPath;
             tab.goBack();
-            m_millerView->setDirectory(tab.currentPath);
+            m_millerView->setDirectory(tab.currentPath, exited);
         }
     });
 
@@ -1739,8 +1741,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             if (m_millerView->tryPluginOverride(QStringLiteral("go_back"))) return true;
             auto& tab = m_tabBar->currentTabState();
             if (tab.canGoBack()) {
+                auto exited = tab.currentPath;
                 tab.goBack();
-                m_millerView->setDirectory(tab.currentPath);
+                m_millerView->setDirectory(tab.currentPath, exited);
             }
             return true;
         } else if (mouseEvent->button() == Qt::ForwardButton) {
@@ -1821,16 +1824,8 @@ void MainWindow::saveCurrentTabState() {
         tab.currentPath = m_millerView->currentDirectory();
         tab.isSudo = m_millerView->isCurrentSudo();
         tab.sudoRoot = m_millerView->sudoRoot();
-        auto sel = m_millerView->selectedPaths();
-        tab.selectedPaths.clear();
-        if (!sel.empty()) {
-            tab.selectedItem = sel.front();
-            for (const auto& p : sel) {
-                tab.selectedPaths.insert(p.string());
-            }
-        } else {
-            tab.selectedItem.clear();
-        }
+        tab.selectedItem = m_millerView->focusedPath();
+        tab.selectedPaths = m_millerView->multiSelectedPaths();
     }
 }
 
@@ -1844,22 +1839,20 @@ void MainWindow::restoreTabState(int index) {
         m_statusBar->setSudoBadge(curTab.isSudo);
     }
 
-    if (!curTab.selectedPaths.empty()) {
-        m_millerView->restoreMultiSelection(curTab.selectedPaths, curTab.selectedItem);
-    } else if (!curTab.selectedItem.empty()) {
-        m_millerView->selectPathAfterRefresh(curTab.selectedItem);
-    }
-
     if (m_millerView->currentDirectory() != curTab.currentPath) {
-        m_millerView->setDirectory(curTab.currentPath);
-    } else if (!curTab.selectedItem.empty()) {
-        m_millerView->selectPathAfterRefresh(curTab.selectedItem);
-        m_millerView->refresh();
+        m_millerView->setDirectory(curTab.currentPath, curTab.selectedItem);
+        if (!curTab.selectedPaths.empty()) {
+            m_millerView->restoreMultiSelection(curTab.selectedPaths, curTab.selectedItem);
+        }
+    } else {
+        if (!curTab.selectedPaths.empty()) {
+            m_millerView->restoreMultiSelection(curTab.selectedPaths, curTab.selectedItem);
+        } else if (!curTab.selectedItem.empty()) {
+            m_millerView->selectAndFocusPath(curTab.selectedItem);
+        }
     }
 
-    if (!curTab.selectedPaths.empty()) {
-        m_millerView->restoreMultiSelection(curTab.selectedPaths, curTab.selectedItem);
-    }
+    m_millerView->focusCenter();
 
     if (m_bookmarksBar) {
         m_bookmarksBar->setActiveDirectory(curTab.currentPath);
@@ -1869,6 +1862,7 @@ void MainWindow::restoreTabState(int index) {
 
 void MainWindow::onTabChanged(int index) {
     if (index < 0 || index >= m_tabBar->count()) return;
+    m_isSwitchingTab = true;
     // архив живёт только в текущей вкладке; при переключении возвращаемся в каталог
     if (m_millerView && m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
     saveCurrentTabState();
@@ -1877,6 +1871,7 @@ void MainWindow::onTabChanged(int index) {
     if (m_millerView && !m_millerView->currentDirectory().empty()) {
         onDirectoryChanged(m_millerView->currentDirectory());
     }
+    m_isSwitchingTab = false;
 }
 
 void MainWindow::onTabCloseRequested(int index) {
@@ -1938,7 +1933,7 @@ void MainWindow::onDirectoryChanged(const std::filesystem::path& path) {
     QString pathQ = QString::fromUtf8(path.c_str());
     if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
         auto& tab = m_tabBar->currentTabState();
-        if (tab.currentPath != path) {
+        if (!m_isSwitchingTab && tab.currentPath != path) {
             tab.navigateTo(path);
         }
         QString fnameQ = QString::fromUtf8(path.filename().c_str());

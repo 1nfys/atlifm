@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 #include "../atlifm-models/FileSystemModel.hpp"
 #include "FileItemDelegate.hpp"
 #include "PreviewPane.hpp"
@@ -105,7 +106,7 @@ public:
     explicit MillerViewContainer(QWidget* parent = nullptr);
     ~MillerViewContainer() override;
 
-    void setDirectory(const std::filesystem::path& path);
+    void setDirectory(const std::filesystem::path& path, const std::filesystem::path& pathToSelect = {});
     const std::filesystem::path& currentDirectory() const { return m_currentDir; }
 
     void setFilter(const QString& filter);
@@ -118,6 +119,8 @@ public:
     bool isArchiveViewActive() const { return !m_archivePath.empty(); }
     const std::filesystem::path& archivePath() const { return m_archivePath; }
     void leaveArchive();
+    std::filesystem::path focusedPath() const;
+    std::unordered_set<std::string> multiSelectedPaths() const;
     std::vector<std::filesystem::path> selectedPaths() const;
     // все элементы текущей колонки (для fuzzy palette), в порядке отображения
     std::vector<std::filesystem::path> currentEntries() const;
@@ -339,6 +342,7 @@ private:
     int m_lastKnownRow{0};
     QString m_savedCurrentPath;
     int m_pendingSelectRetries{0};
+    std::unordered_map<std::string, std::filesystem::path> m_lastSelectedInDir;
     QPointer<TuiContextMenu> m_activeContextMenu;
     bool m_archiveSelectionActive{false};
 

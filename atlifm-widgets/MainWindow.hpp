@@ -187,6 +187,7 @@ private:
     // минус один означает брать sidebar_width из конфига иначе сохраненный layout.ini
     int m_sidebarWidth{-1};
     int m_lastTabIndex{0};
+    bool m_isSwitchingTab{false};
     std::vector<std::filesystem::path> m_closedTabsHistory;
     // шорткаты, которые обязаны уступать ввод в текстовые поля этого же окна
     // (filter/path/prompt статусбара, оверлеи) см. updateshortcutavailability
