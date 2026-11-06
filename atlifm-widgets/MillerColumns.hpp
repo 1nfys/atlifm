@@ -73,6 +73,7 @@ protected:
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void updateGeometries() override;
 
     // пути для исходящего драга; страница архива переопределяет: пути виртуальные (архив + запись)
     virtual std::vector<std::filesystem::path> dragOutPaths(const QModelIndex& startIndex) const;
@@ -118,7 +119,9 @@ public:
     // архив открыт в центральной области (страница поверх колонок); путь вкладки при этом не меняется
     bool isArchiveViewActive() const { return !m_archivePath.empty(); }
     const std::filesystem::path& archivePath() const { return m_archivePath; }
+    void enterArchive(const std::filesystem::path& archivePath, const QString& memberToSelect = {});
     void leaveArchive();
+    QString archiveSelectedMember() const;
     std::filesystem::path focusedPath() const;
     std::unordered_set<std::string> multiSelectedPaths() const;
     std::vector<std::filesystem::path> selectedPaths() const;
@@ -298,7 +301,6 @@ private:
     void activateFileSelection();
     // открыть файл: архивы уходят в центральную страницу, остальное в приложение по умолчанию
     void openFile(const std::filesystem::path& path);
-    void enterArchive(const std::filesystem::path& archivePath);
     // применяет сохранённую сортировку каталога к модели колонки; нет записи модель сохраняет текущий режим (sticky)
     void applySortToModel(const std::filesystem::path& dir, Models::FileSystemModel* model);
     // синхронизирует подсветку «открытой папки» в родительской колонке: приглушённая подсветка через делегат, current index без выделения
@@ -352,6 +354,7 @@ private:
     ArchiveTreeWidget* m_archiveTree{nullptr};
     Models::ArchiveModel* m_archiveModel{nullptr};
     std::filesystem::path m_archivePath;
+    QString m_pendingArchiveMember;
     QTimer* m_archivePreviewTimer{nullptr};
     QString m_archivePreviewPendingPath;
     QString m_archivePreviewPendingMember;

@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.3" date="2026-11-06">
+      <description>
+        <p>archive tab state persistence, navigation fixes, preview pane actions and search optimizations.</p>
+      </description>
+    </release>
     <release version="1.0.2" date="2026-10-24">
       <description>
         <p>default file manager integration, filemanager1 dbus service, live plugin previews and archive password support.</p>

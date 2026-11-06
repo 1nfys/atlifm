@@ -95,6 +95,14 @@ MillerListView::MillerListView(bool isParentPane, QWidget* parent)
     setSelectionMode(QAbstractItemView::ExtendedSelection);
 }
 
+void MillerListView::updateGeometries() {
+    QListView::updateGeometries();
+    if (verticalScrollBar() && verticalScrollBar()->maximum() > 0) {
+        verticalScrollBar()->setRange(verticalScrollBar()->minimum(),
+                                      verticalScrollBar()->maximum() + 72);
+    }
+}
+
 void MillerListView::setDropTargetRow(int row) {
     auto del = qobject_cast<FileItemDelegate*>(itemDelegate());
     if (del && del->dropTargetRow() != row) {
@@ -408,7 +416,9 @@ void MillerListView::mousePressEvent(QMouseEvent* event) {
         if (m_rubberBand) {
             m_rubberBand->hide();
         }
-        QModelIndex idx = indexAt(event->pos());
+        bool inLeftGutter = (event->pos().x() < 16);
+        bool inRightGutter = (event->pos().x() >= viewport()->width() - 18);
+        QModelIndex idx = (inLeftGutter || inRightGutter) ? QModelIndex() : indexAt(event->pos());
         if (idx.isValid()) {
             if (!selectionModel()->isSelected(idx)) {
                 selectionModel()->clearSelection();
@@ -894,6 +904,10 @@ void MillerViewContainer::setupUi() {
         if (m_archiveModel->archivePath() != m_archivePath) return;
         m_archiveTree->setArchivePath(m_archivePath);
         m_archiveTree->buildFromEntries(m_archiveModel->entries());
+        if (!m_pendingArchiveMember.isEmpty()) {
+            m_archiveTree->selectMemberPath(m_pendingArchiveMember);
+            m_pendingArchiveMember.clear();
+        }
     });
     connect(m_archiveModel, &Models::ArchiveModel::loadFailed, this, [this](const QString& error) {
         if (m_archiveTree && !m_archivePath.empty()) m_archiveTree->showMessage(error);
@@ -1047,6 +1061,10 @@ void MillerViewContainer::setupUi() {
             this, &MillerViewContainer::activateArchiveSelection);
     connect(m_previewPane, &PreviewPane::messageRequested,
             this, &MillerViewContainer::messageEmitted);
+    connect(m_previewPane, &PreviewPane::newFolderRequested,
+            this, &MillerViewContainer::createNewFolder);
+    connect(m_previewPane, &PreviewPane::newFileRequested,
+            this, &MillerViewContainer::createNewFile);
     connect(m_centerView, &MillerListView::selectionInteractionStarted,
             this, &MillerViewContainer::activateFileSelection);
     connect(m_parentView, &MillerListView::selectionInteractionStarted,
@@ -1566,6 +1584,10 @@ std::filesystem::path MillerViewContainer::focusedPath() const {
 std::unordered_set<std::string> MillerViewContainer::multiSelectedPaths() const {
     if (isArchiveViewActive() || !m_centerModel) return {};
     return m_centerModel->selectedPathsSet();
+}
+
+QString MillerViewContainer::archiveSelectedMember() const {
+    return (m_archiveTree && isArchiveViewActive()) ? m_archiveTree->selectedMemberPath() : QString();
 }
 
 std::vector<std::filesystem::path> MillerViewContainer::selectedPaths() const {
@@ -2511,12 +2533,13 @@ void MillerViewContainer::onArchiveEntrySelected(const QString& normalizedPath,
     m_archivePreviewTimer->start();
 }
 
-void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath) {
+void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath, const QString& memberToSelect) {
     if (archivePath.empty() || !m_centerStack || !m_archiveTree || !m_archiveModel) return;
     std::error_code ec;
     if (!std::filesystem::is_regular_file(archivePath, ec) || ec) return;
 
     m_archivePath = archivePath;
+    m_pendingArchiveMember = memberToSelect;
     if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
     ++m_archivePreviewRequest;
     m_archivePreviewQueued = false;
@@ -2552,6 +2575,10 @@ void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath)
         m_archiveTree->showMessage(QStringLiteral("Reading archive\u2026"));
     } else if (m_archiveModel->isLoaded()) {
         m_archiveTree->buildFromEntries(m_archiveModel->entries());
+        if (!m_pendingArchiveMember.isEmpty()) {
+            m_archiveTree->selectMemberPath(m_pendingArchiveMember);
+            m_pendingArchiveMember.clear();
+        }
     } else if (!m_archiveModel->error().isEmpty()) {
         m_archiveTree->showMessage(m_archiveModel->error());
     }
@@ -2562,7 +2589,9 @@ void MillerViewContainer::enterArchive(const std::filesystem::path& archivePath)
 
 void MillerViewContainer::leaveArchive() {
     if (m_archivePath.empty()) return;
+    const auto archive = m_archivePath;
     m_archivePath.clear();
+    m_pendingArchiveMember.clear();
     if (m_archivePreviewTimer) m_archivePreviewTimer->stop();
     ++m_archivePreviewRequest;
     m_archivePreviewQueued = false;
@@ -2572,15 +2601,23 @@ void MillerViewContainer::leaveArchive() {
     if (m_archiveTree) m_archiveTree->clearArchive();
     if (m_archiveModel) m_archiveModel->clear();
     if (m_centerStack) m_centerStack->setCurrentWidget(m_centerView);
-    // возвращаем левую колонку к родителю текущего каталога
-    if (m_parentModel) {
-        const bool hasParent =
-            m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path();
-        const auto parent = hasParent ? m_currentDir.parent_path() : m_currentDir;
-        m_parentModel->setDirectory(parent);
-        applySortToModel(parent, m_parentModel);
+
+    const auto archiveDir = archive.parent_path();
+    if (!archiveDir.empty() && m_currentDir != archiveDir) {
+        setDirectory(archiveDir, archive);
+    } else {
+        // возвращаем левую колонку к родителю текущего каталога
+        if (m_parentModel) {
+            const bool hasParent =
+                m_currentDir.has_parent_path() && m_currentDir != m_currentDir.parent_path();
+            const auto parent = hasParent ? m_currentDir.parent_path() : m_currentDir;
+            m_parentModel->setDirectory(parent);
+            applySortToModel(parent, m_parentModel);
+        }
+        syncParentViewToCurrentDir();
+        selectAndFocusPath(archive);
     }
-    syncParentViewToCurrentDir();
+    if (m_previewPane) m_previewPane->previewPath(archive);
     if (m_centerView) m_centerView->setFocus();
     emit archiveLeft(m_currentDir);
 }

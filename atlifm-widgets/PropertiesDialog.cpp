@@ -540,7 +540,7 @@ void PropertiesDialog::runPathWeightProc(bool viaSudo) {
         m_sizeLabel->setText(QStringLiteral("?"));
     });
 
-    QStringList args{"du", "-s", "-b", "--", QString::fromUtf8(m_path.c_str())};
+    QStringList args{"du", "-s", "-b", "-x", "--", QString::fromUtf8(m_path.c_str())};
     if (viaSudo) args = Core::XdgUtils::rootArgs(args);
     proc->start(args.first(), args.mid(1));
 }
@@ -863,7 +863,7 @@ void PropertiesDialog::startSudoBatch() {
     QString duExe = Core::XdgUtils::resolveTrustedExe(QStringLiteral("du"));
     if (duExe.isEmpty()) duExe = QStringLiteral("/usr/bin/du");
     const QString script = QStringLiteral(
-        "for p in \"$@\"; do \"%1\" -s -b --null -- \"$p\" || true; done").arg(duExe);
+        "for p in \"$@\"; do \"%1\" -s -b -x --null -- \"$p\" || true; done").arg(duExe);
     QStringList cmd{QStringLiteral("/bin/sh"), QStringLiteral("-c"), script, QStringLiteral("_")};
     for (const QString& name : m_diskSudoQueue) {
         cmd << (m_diskRootClean.endsWith('/') ? m_diskRootClean + name

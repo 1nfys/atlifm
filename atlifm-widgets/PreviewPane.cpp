@@ -1586,50 +1586,85 @@ void PreviewPane::onDirContextMenu(const QPoint& globalPos, const QModelIndex& i
     connect(menu, &TuiContextMenu::pluginRequested, this, [this, sel](const QString& id) {
         emit pluginRunRequested(id, sel.empty() ? m_activePath : sel.front(), m_activePath);
     });
+    connect(menu, &TuiContextMenu::newFolderRequested, this, [this]() {
+        if (m_activePath.empty()) return;
+        bool ok = false;
+        QString name = TuiInputPopup::getText(this, "New Folder", "Folder name:", "new_folder", &ok);
+        name = name.trimmed();
+        if (ok && !name.isEmpty()) {
+            std::filesystem::path newDir = m_activePath / std::filesystem::path(name.toUtf8().toStdString());
+            std::error_code ec;
+            if (std::filesystem::create_directories(newDir, ec)) {
+                if (m_dirModel) m_dirModel->refresh();
+                emit messageRequested("Created folder");
+            }
+        }
+    });
+    connect(menu, &TuiContextMenu::newFileRequested, this, [this]() {
+        if (m_activePath.empty()) return;
+        bool ok = false;
+        QString name = TuiInputPopup::getText(this, "New File", "File name:", "new_file.txt", &ok, QPoint(), true);
+        name = name.trimmed();
+        if (ok && !name.isEmpty()) {
+            std::filesystem::path newFile = m_activePath / std::filesystem::path(name.toUtf8().toStdString());
+            std::error_code ec;
+            if (!std::filesystem::exists(newFile, ec)) {
+                QFile f(QString::fromUtf8(newFile.c_str()));
+                if (f.open(QIODevice::WriteOnly)) {
+                    f.close();
+                    if (m_dirModel) m_dirModel->refresh();
+                    emit messageRequested("Created file");
+                }
+            }
+        }
+    });
 
     menu->popup(globalPos);
 }
 
 void PreviewPane::contextMenuEvent(QContextMenuEvent* event) {
-    if (m_activePath.empty()) {
-        QWidget::contextMenuEvent(event);
-        return;
-    }
-
     auto menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setFont(Theme::getMonospaceFont(9));
     menu->setStyleSheet(Theme::getApplicationStyleSheet());
 
-    auto actOpen = menu->addAction("\U000F0214 Open\tEnter");
-    auto actTerm = menu->addAction("\U000F0489 Open Terminal\tF4");
-    menu->addSeparator();
-    auto actCopyPath = menu->addAction("\U000F0337 Copy Path\tCtrl+Shift+C");
-    auto actCopyName = menu->addAction("\U000F018F Copy Name");
-    menu->addSeparator();
-    auto actProps = menu->addAction("\U000F02FD Properties\tAlt+Enter");
+    if (!m_activePath.empty()) {
+        auto actOpen = menu->addAction("\U000F0214 Open\tEnter");
+        auto actTerm = menu->addAction("\U000F0489 Open Terminal\tF4");
+        menu->addSeparator();
+        auto actCopyPath = menu->addAction("\U000F0337 Copy Path\tCtrl+Shift+C");
+        auto actCopyName = menu->addAction("\U000F018F Copy Name");
+        menu->addSeparator();
+        auto actProps = menu->addAction("\U000F02FD Properties\tAlt+Enter");
 
-    connect(actOpen, &QAction::triggered, this, [this]() {
-        if (Core::XdgUtils::isArchive(m_activePath)) {
-            emit archiveOpenRequested(m_activePath);
-            return;
-        }
-        Core::XdgUtils::openWithDefault(m_activePath);
-    });
-    connect(actTerm, &QAction::triggered, this, [this]() {
-        std::error_code ec;
-        bool isDir = std::filesystem::is_directory(m_activePath, ec);
-        Core::XdgUtils::openTerminalAt(isDir ? m_activePath : m_activePath.parent_path());
-    });
-    connect(actProps, &QAction::triggered, this, [this]() {
-        emit propertiesRequested(m_activePath);
-    });
-    connect(actCopyPath, &QAction::triggered, this, [this]() {
-        QApplication::clipboard()->setText(QString::fromUtf8(m_activePath.c_str()));
-    });
-    connect(actCopyName, &QAction::triggered, this, [this]() {
-        QApplication::clipboard()->setText(QString::fromUtf8(m_activePath.filename().c_str()));
-    });
+        connect(actOpen, &QAction::triggered, this, [this]() {
+            if (Core::XdgUtils::isArchive(m_activePath)) {
+                emit archiveOpenRequested(m_activePath);
+                return;
+            }
+            Core::XdgUtils::openWithDefault(m_activePath);
+        });
+        connect(actTerm, &QAction::triggered, this, [this]() {
+            std::error_code ec;
+            bool isDir = std::filesystem::is_directory(m_activePath, ec);
+            Core::XdgUtils::openTerminalAt(isDir ? m_activePath : m_activePath.parent_path());
+        });
+        connect(actProps, &QAction::triggered, this, [this]() {
+            emit propertiesRequested(m_activePath);
+        });
+        connect(actCopyPath, &QAction::triggered, this, [this]() {
+            QApplication::clipboard()->setText(QString::fromUtf8(m_activePath.c_str()));
+        });
+        connect(actCopyName, &QAction::triggered, this, [this]() {
+            QApplication::clipboard()->setText(QString::fromUtf8(m_activePath.filename().c_str()));
+        });
+    } else {
+        auto actNewFolder = menu->addAction("\U000F024B New Folder\tCtrl+Shift+N");
+        connect(actNewFolder, &QAction::triggered, this, &PreviewPane::newFolderRequested);
+
+        auto actNewFile = menu->addAction("\U000F0214 New File\tCtrl+Alt+N");
+        connect(actNewFile, &QAction::triggered, this, &PreviewPane::newFileRequested);
+    }
 
     menu->popup(event->globalPos());
 }

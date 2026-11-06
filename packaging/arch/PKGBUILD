@@ -1,6 +1,6 @@
 # мейнтейнер 1nfys <lifawafla@gmail.com>
 pkgname=atlifm
-pkgver=1.0.2
+pkgver=1.0.3
 pkgrel=1
 pkgdesc="Terminal-style file manager with a GUI mouse-first workflow"
 arch=('x86_64' 'aarch64')
@@ -13,8 +13,8 @@ source=("atlifm-$pkgver-fixed.tar.gz"
         "atlifm.metainfo.xml"
         "atlifm.1")
 sha256sums=('SKIP'
-            '0ae63ccd764003613100ea45679689bf1d039ccd59e1342b93a5aac04e994060'
-            'b19341b8f5d2f0e297016667ed9b416f32ea6ac4f6e2972e56d830767112c1ac')
+            '72a70aadb44cc805770a7c5c65f41a46cb5c6539a02b5d71a71e8a897bae2d46'
+            '87341bcde9eee1846daa81df59ddd231c0c8259dccccd575da7c2d4a5802ed5a')
 
 build() {
 	cmake -S "$pkgname-$pkgver" -B build -G Ninja \

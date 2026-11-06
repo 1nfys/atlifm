@@ -79,6 +79,8 @@ signals:
     void pluginRunRequested(const QString& pluginId,
                             const std::filesystem::path& target,
                             const std::filesystem::path& cwd);
+    void newFolderRequested();
+    void newFileRequested();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

@@ -8,7 +8,7 @@ proj=$(CDPATH= cd -- "$here/../.." && pwd)
 SRC=${1:-$proj}
 OUT=${2:-$proj/dist}
 
-VERSION=${VERSION:-1.0.2}
+VERSION=${VERSION:-1.0.3}
 REVISION=${REVISION:-1}
 ARCH=${ARCH:-$(dpkg --print-architecture)}
 

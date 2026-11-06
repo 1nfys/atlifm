@@ -23,6 +23,8 @@ struct TabState {
     bool isSudo{false};
     std::filesystem::path sudoRoot; // каталог, открытый через sudo open (индикатор sudo)
     QString filterQuery;
+    std::filesystem::path openArchivePath;
+    QString archiveMember;
 
     void navigateTo(const std::filesystem::path& newPath) {
         std::error_code ec;
@@ -40,6 +42,8 @@ struct TabState {
         scrollOffset = 0;
         filterQuery.clear();
         isSudo = false;
+        openArchivePath.clear();
+        archiveMember.clear();
     }
 
     bool canGoBack() const {
@@ -57,6 +61,8 @@ struct TabState {
         backHistory.pop_back();
         selectedItem.clear();
         selectedPaths.clear();
+        openArchivePath.clear();
+        archiveMember.clear();
     }
 
     void goForward() {
@@ -66,6 +72,8 @@ struct TabState {
         forwardHistory.pop_back();
         selectedItem.clear();
         selectedPaths.clear();
+        openArchivePath.clear();
+        archiveMember.clear();
     }
 };
 

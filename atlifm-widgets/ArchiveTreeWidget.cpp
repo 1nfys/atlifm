@@ -432,6 +432,30 @@ void ArchiveTreeWidget::clearEntrySelection() {
     viewport()->update();
 }
 
+QString ArchiveTreeWidget::selectedMemberPath() const {
+    QTreeWidgetItem* cur = currentItem();
+    if (cur && isEntryItem(cur)) {
+        return cur->data(0, kMemberPathRole).toString();
+    }
+    return {};
+}
+
+bool ArchiveTreeWidget::selectMemberPath(const QString& memberPath) {
+    if (memberPath.isEmpty()) return false;
+    QTreeWidgetItemIterator it(this);
+    for (; *it; ++it) {
+        QTreeWidgetItem* item = *it;
+        if (item && item->data(0, kMemberPathRole).toString() == memberPath) {
+            clearSelection();
+            setCurrentItem(item, 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            m_selectionAnchor = item;
+            scrollToItem(item, QAbstractItemView::EnsureVisible);
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ArchiveTreeWidget::hasSelectedEntries() const {
     const QList<QTreeWidgetItem*> items = selectedItems();
     for (QTreeWidgetItem* item : items) {
@@ -1048,6 +1072,11 @@ void ArchiveTreeWidget::mousePressEvent(QMouseEvent* event) {
         event->accept();
         return;
     }
+    if (event->button() == Qt::BackButton) {
+        emit leaveArchiveRequested();
+        event->accept();
+        return;
+    }
     QTreeWidget::mousePressEvent(event);
 }
 
@@ -1159,8 +1188,8 @@ void ArchiveTreeWidget::keyPressEvent(QKeyEvent* event) {
         QTreeWidgetItem* cur = currentItem();
         QTreeWidgetItem* root = topLevelItemCount() > 0 ? topLevelItem(0) : nullptr;
         if (!cur || cur == root) {
-            emit leaveArchiveRequested();
             event->accept();
+            emit leaveArchiveRequested();
             return;
         }
         if (cur->isExpanded() && cur->childCount() > 0) {
@@ -1174,8 +1203,8 @@ void ArchiveTreeWidget::keyPressEvent(QKeyEvent* event) {
             return;
         }
         // верхний уровень архива при свернутом элементе или файле выходит из архива
-        emit leaveArchiveRequested();
         event->accept();
+        emit leaveArchiveRequested();
         return;
     }
     if (k == Qt::Key_Right) {

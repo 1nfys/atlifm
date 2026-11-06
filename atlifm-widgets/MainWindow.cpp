@@ -324,6 +324,7 @@ void MainWindow::setupUi() {
         const QString name = QString::fromUtf8(archive.filename().c_str());
         if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
             m_tabBar->updateTabTitle(m_tabBar->currentIndex(), name);
+            m_tabBar->currentTabState().openArchivePath = archive;
         }
         setWindowTitle(QStringLiteral("atlifm: %1").arg(archiveQ));
     });
@@ -332,6 +333,9 @@ void MainWindow::setupUi() {
         const QString name = QString::fromUtf8(dir.filename().c_str());
         if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
             m_tabBar->updateTabTitle(m_tabBar->currentIndex(), name.isEmpty() ? dirQ : name);
+            auto& tab = m_tabBar->currentTabState();
+            tab.openArchivePath.clear();
+            tab.archiveMember.clear();
         }
         if (m_statusBar) m_statusBar->setPath(dir);
         setWindowTitle(QStringLiteral("atlifm: %1").arg(dirQ));
@@ -1738,6 +1742,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::MouseButtonPress) {
         auto* mouseEvent = static_cast<QMouseEvent*>(event);
         if (mouseEvent->button() == Qt::BackButton) {
+            if (m_millerView && m_millerView->isArchiveViewActive()) {
+                m_millerView->leaveArchive();
+                return true;
+            }
             if (m_millerView->tryPluginOverride(QStringLiteral("go_back"))) return true;
             auto& tab = m_tabBar->currentTabState();
             if (tab.canGoBack()) {
@@ -1747,6 +1755,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             }
             return true;
         } else if (mouseEvent->button() == Qt::ForwardButton) {
+            if (m_millerView && m_millerView->isArchiveViewActive()) return true;
             if (m_millerView->tryPluginOverride(QStringLiteral("go_forward"))) return true;
             auto& tab = m_tabBar->currentTabState();
             if (tab.canGoForward()) {
@@ -1826,6 +1835,13 @@ void MainWindow::saveCurrentTabState() {
         tab.sudoRoot = m_millerView->sudoRoot();
         tab.selectedItem = m_millerView->focusedPath();
         tab.selectedPaths = m_millerView->multiSelectedPaths();
+        if (m_millerView->isArchiveViewActive()) {
+            tab.openArchivePath = m_millerView->archivePath();
+            tab.archiveMember = m_millerView->archiveSelectedMember();
+        } else {
+            tab.openArchivePath.clear();
+            tab.archiveMember.clear();
+        }
     }
 }
 
@@ -1852,7 +1868,27 @@ void MainWindow::restoreTabState(int index) {
         }
     }
 
-    m_millerView->focusCenter();
+    // восстанавливаем открытый архив вкладки или закрываем архив прошлой вкладки
+    if (!curTab.openArchivePath.empty()) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(curTab.openArchivePath, ec) && !ec) {
+            m_millerView->enterArchive(curTab.openArchivePath, curTab.archiveMember);
+        } else {
+            if (m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
+        }
+    } else {
+        if (m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
+    }
+
+    if (m_millerView->isArchiveViewActive()) {
+        const QString archiveQ = QString::fromUtf8(curTab.openArchivePath.c_str());
+        const QString name = QString::fromUtf8(curTab.openArchivePath.filename().c_str());
+        m_tabBar->updateTabTitle(index, name.isEmpty() ? archiveQ : name);
+        setWindowTitle(QStringLiteral("atlifm: %1").arg(archiveQ));
+        if (m_statusBar) m_statusBar->setPath(curTab.currentPath);
+    } else {
+        m_millerView->focusCenter();
+    }
 
     if (m_bookmarksBar) {
         m_bookmarksBar->setActiveDirectory(curTab.currentPath);
@@ -1863,12 +1899,9 @@ void MainWindow::restoreTabState(int index) {
 void MainWindow::onTabChanged(int index) {
     if (index < 0 || index >= m_tabBar->count()) return;
     m_isSwitchingTab = true;
-    // архив живёт только в текущей вкладке; при переключении возвращаемся в каталог
-    if (m_millerView && m_millerView->isArchiveViewActive()) m_millerView->leaveArchive();
     saveCurrentTabState();
     restoreTabState(index);
-    // archiveleft мог обновить заголовок уже выбранной вкладки: синхронизируем с её каталогом
-    if (m_millerView && !m_millerView->currentDirectory().empty()) {
+    if (m_millerView && !m_millerView->isArchiveViewActive() && !m_millerView->currentDirectory().empty()) {
         onDirectoryChanged(m_millerView->currentDirectory());
     }
     m_isSwitchingTab = false;

@@ -39,6 +39,8 @@ public:
     bool extractEntryForPreview(const QString& normalizedPath, const QString& memberPath,
                                 std::filesystem::path& outPath, QString& error);
     bool isExtracting() const { return m_extracting; }
+    QString selectedMemberPath() const;
+    bool selectMemberPath(const QString& memberPath);
 
 signals:
     void leaveArchiveRequested();
