@@ -4,6 +4,8 @@
 #include <QListWidget>
 #include <QLabel>
 #include <QPushButton>
+#include <QSocketNotifier>
+#include <QTimer>
 #include <filesystem>
 #include <vector>
 #include "../atlifm-core/Bookmarks.hpp"
@@ -30,6 +32,7 @@ class BookmarksBar : public QWidget {
 
 public:
     explicit BookmarksBar(QWidget* parent = nullptr);
+    ~BookmarksBar() override;
 
     void addBookmark(const std::filesystem::path& path, const QString& title = "");
     void refresh();
@@ -67,6 +70,7 @@ private slots:
 private:
     void setupUi();
     void populateItems();
+    void unmountDrive(const std::filesystem::path& path);
 
     BookmarksListWidget* m_listWidget{nullptr};
     BookmarkItemDelegate* m_delegate{nullptr};
@@ -76,6 +80,11 @@ private:
 
     std::filesystem::path m_activeDir;
     int m_dragHoverRow{-1};
+
+    int m_mountInfoFd{-1};
+    QSocketNotifier* m_mountNotifier{nullptr};
+    QTimer* m_mountDebounceTimer{nullptr};
+    QTimer* m_mountPollTimer{nullptr};
 };
 
 }

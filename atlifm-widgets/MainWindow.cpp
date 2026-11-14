@@ -1330,7 +1330,10 @@ void MainWindow::createKeybindShortcuts() {
     bind("quick_jump", [this]() { showQuickJumpMenu(); });
 
     // обновить
-    bind("refresh", [this]() { m_millerView->refresh(); });
+    bind("refresh", [this]() {
+        m_millerView->refresh();
+        if (m_bookmarksBar) m_bookmarksBar->refresh();
+    });
 
     // поиск / фильтр
     bind("filter", [this]() {

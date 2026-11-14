@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.4" date="2026-11-14">
+      <description>
+        <p>file chooser layout refinement, folder selection mode, portal savefiles and unmount actions.</p>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-11-06">
       <description>
         <p>archive tab state persistence, navigation fixes, preview pane actions and search optimizations.</p>

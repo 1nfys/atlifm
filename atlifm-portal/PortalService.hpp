@@ -65,11 +65,15 @@ public slots:
                   const QString& title, const QVariantMap& options);
     void SaveFile(const QDBusObjectPath& handle, const QString& appId, const QString& parentWindow,
                   const QString& title, const QVariantMap& options);
+    void SaveFiles(const QDBusObjectPath& handle, const QString& appId, const QString& parentWindow,
+                   const QString& title, const QVariantMap& options);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    enum class CallMode { Open, SaveFile, SaveFiles };
+
     struct Session {
         QDBusMessage call;
         QPointer<QWidget> window;
@@ -80,7 +84,7 @@ private:
 
     void handleCall(const QDBusMessage& call, const QDBusObjectPath& handle,
                     const QString& parentWindow, const QString& title, const QVariantMap& options,
-                    bool save);
+                    CallMode mode);
     void finishSession(const QString& key, uint response, const QVariantMap& results);
 
     QString m_busName;

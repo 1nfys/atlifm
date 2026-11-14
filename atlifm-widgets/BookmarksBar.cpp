@@ -15,6 +15,11 @@
 #include <QClipboard>
 #include <QPointer>
 #include <QStyledItemDelegate>
+#include <QSocketNotifier>
+#include <QTimer>
+#include <QProcess>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace Widgets {
 
@@ -123,6 +128,63 @@ BookmarksBar::BookmarksBar(QWidget* parent)
     setAcceptDrops(true);
     setupUi();
     refresh();
+
+#if defined(Q_OS_LINUX)
+    m_mountInfoFd = ::open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC);
+    if (m_mountInfoFd < 0) {
+        m_mountInfoFd = ::open("/proc/mounts", O_RDONLY | O_CLOEXEC);
+    }
+    if (m_mountInfoFd >= 0) {
+        m_mountNotifier = new QSocketNotifier(m_mountInfoFd, QSocketNotifier::Exception, this);
+        connect(m_mountNotifier, &QSocketNotifier::activated, this, [this]() {
+            if (m_mountInfoFd >= 0) {
+                ::lseek(m_mountInfoFd, 0, SEEK_SET);
+                char buf[128];
+                const auto n = ::read(m_mountInfoFd, buf, sizeof(buf));
+                (void)n;
+            }
+            if (m_mountDebounceTimer) {
+                m_mountDebounceTimer->start();
+            } else {
+                refresh();
+            }
+        });
+    }
+#endif
+
+    m_mountDebounceTimer = new QTimer(this);
+    m_mountDebounceTimer->setSingleShot(true);
+    m_mountDebounceTimer->setInterval(150);
+    connect(m_mountDebounceTimer, &QTimer::timeout, this, &BookmarksBar::refresh);
+
+    m_mountPollTimer = new QTimer(this);
+    m_mountPollTimer->setInterval(2000);
+    connect(m_mountPollTimer, &QTimer::timeout, this, [this]() {
+        auto newDrives = Core::BookmarksManager::loadDrives();
+        bool changed = (newDrives.size() != m_drives.size());
+        if (!changed) {
+            for (size_t i = 0; i < newDrives.size(); ++i) {
+                if (newDrives[i].path != m_drives[i].path) {
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (changed) {
+            refresh();
+        }
+    });
+    m_mountPollTimer->start();
+}
+
+BookmarksBar::~BookmarksBar() {
+    if (m_mountNotifier) {
+        m_mountNotifier->setEnabled(false);
+    }
+    if (m_mountInfoFd >= 0) {
+        ::close(m_mountInfoFd);
+        m_mountInfoFd = -1;
+    }
 }
 
 QSize BookmarksBar::sizeHint() const {
@@ -238,11 +300,26 @@ void BookmarksBar::setupUi() {
             });
         }
 
-    auto actProps = menu.addAction("\U000F02FD Properties\tAlt+Enter");
-    connect(actProps, &QAction::triggered, this, [this, p]() {
-        // свойства с блоком disk usage открывает millerviewcontainer как внутреннее окно в центре
-        emit propertiesRequested(p);
-    });
+        auto actProps = menu.addAction("\U000F02FD Properties\tAlt+Enter");
+        connect(actProps, &QAction::triggered, this, [this, p]() {
+            // свойства с блоком disk usage открывает millerviewcontainer как внутреннее окно в центре
+            emit propertiesRequested(p);
+        });
+
+        bool isRemovableDrive = false;
+        for (const auto& d : m_drives) {
+            if (d.path == p && p != std::filesystem::path("/")) {
+                isRemovableDrive = true;
+                break;
+            }
+        }
+        if (isRemovableDrive) {
+            menu.addSeparator();
+            auto actUnmount = menu.addAction("\U000F05D3 Unmount / Eject");
+            connect(actUnmount, &QAction::triggered, this, [this, p]() {
+                unmountDrive(p);
+            });
+        }
 
         if (isUserBm) {
             menu.addSeparator();
@@ -261,7 +338,46 @@ void BookmarksBar::setupUi() {
     mainLayout->addWidget(m_listWidget, 1);
 }
 
+void BookmarksBar::unmountDrive(const std::filesystem::path& path) {
+    const QString pathStr = QString::fromUtf8(path.c_str());
+    QPointer<BookmarksBar> self(this);
+    QProcess* proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            proc, [self, proc, pathStr](int exitCode) {
+        proc->deleteLater();
+        if (exitCode != 0) {
+            QProcess* udisks = new QProcess(self.data());
+            connect(udisks, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    udisks, [self, udisks, pathStr](int uCode) {
+                udisks->deleteLater();
+                if (uCode != 0) {
+                    QProcess::execute(QStringLiteral("umount"), {pathStr});
+                }
+                if (self) self->refresh();
+            });
+            udisks->start(QStringLiteral("udisksctl"), {QStringLiteral("unmount"), QStringLiteral("-p"), pathStr});
+            if (!udisks->waitForStarted(500)) {
+                udisks->deleteLater();
+                QProcess::execute(QStringLiteral("umount"), {pathStr});
+                if (self) self->refresh();
+            }
+        } else {
+            if (self) self->refresh();
+        }
+    });
+    proc->start(QStringLiteral("gio"), {QStringLiteral("mount"), QStringLiteral("-u"), pathStr});
+    if (!proc->waitForStarted(500)) {
+        proc->deleteLater();
+        QProcess::execute(QStringLiteral("umount"), {pathStr});
+        refresh();
+    }
+}
+
 void BookmarksBar::refresh() {
+    if (m_delegate && m_delegate->contextMenuRow() >= 0) {
+        if (m_mountDebounceTimer) m_mountDebounceTimer->start(500);
+        return;
+    }
     using namespace Theme::Colors;
     if (m_listWidget) {
         m_listWidget->setStyleSheet(QString(R"(

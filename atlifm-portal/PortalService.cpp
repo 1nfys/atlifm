@@ -104,6 +104,39 @@ bool senderIsPortalFrontend(const QDBusMessage& call) {
     return owner.isValid() && owner.value() == sender;
 }
 
+QStringList filesFromOptions(const QVariantMap& options) {
+    QStringList result;
+    const QVariant val = options.value(QStringLiteral("files"));
+    if (val.canConvert<QStringList>()) {
+        result = val.toStringList();
+    } else if (val.canConvert<QVariantList>()) {
+        for (const auto& item : val.toList()) {
+            if (item.metaType().id() == QMetaType::QByteArray) {
+                QByteArray b = item.toByteArray();
+                const int nul = b.indexOf('\0');
+                if (nul >= 0) b.truncate(nul);
+                result.append(QString::fromUtf8(b));
+            } else {
+                result.append(item.toString());
+            }
+        }
+    } else if (val.metaType().id() == qMetaTypeId<QDBusArgument>()) {
+        const QDBusArgument arg = val.value<QDBusArgument>();
+        if (arg.currentSignature() == QLatin1String("aay")) {
+            arg.beginArray();
+            while (!arg.atEnd()) {
+                QByteArray bytes;
+                arg >> bytes;
+                const int nul = bytes.indexOf('\0');
+                if (nul >= 0) bytes.truncate(nul);
+                result.append(QString::fromUtf8(bytes));
+            }
+            arg.endArray();
+        }
+    }
+    return result;
+}
+
 }
 
 void PortalRequest::Close() {
@@ -129,7 +162,7 @@ void PortalService::OpenFile(const QDBusObjectPath& handle, const QString& appId
         return;
     }
     setDelayedReply(true);
-    handleCall(call, handle, parentWindow, title, options, /*save=*/false);
+    handleCall(call, handle, parentWindow, title, options, CallMode::Open);
 }
 
 void PortalService::SaveFile(const QDBusObjectPath& handle, const QString& appId,
@@ -143,7 +176,21 @@ void PortalService::SaveFile(const QDBusObjectPath& handle, const QString& appId
         return;
     }
     setDelayedReply(true);
-    handleCall(call, handle, parentWindow, title, options, /*save=*/true);
+    handleCall(call, handle, parentWindow, title, options, CallMode::SaveFile);
+}
+
+void PortalService::SaveFiles(const QDBusObjectPath& handle, const QString& appId,
+                              const QString& parentWindow, const QString& title,
+                              const QVariantMap& options) {
+    Q_UNUSED(appId);
+    if (!calledFromDBus()) return;
+    const QDBusMessage call = message();
+    if (!senderIsPortalFrontend(call)) {
+        sendErrorReply(QDBusError::AccessDenied, QStringLiteral("Unmatched caller"));
+        return;
+    }
+    setDelayedReply(true);
+    handleCall(call, handle, parentWindow, title, options, CallMode::SaveFiles);
 }
 
 bool PortalService::start() {
@@ -173,7 +220,7 @@ bool PortalService::start() {
 
 void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& handle,
                                const QString& parentWindow, const QString& title,
-                               const QVariantMap& options, bool save) {
+                               const QVariantMap& options, CallMode mode) {
     const QString key = handle.path();
     // фронтенд всегда даёт handle вида /org/freedesktop/portal/desktop/request/<sender>/<token>,
     // всё остальное это нештатный вызов
@@ -206,7 +253,15 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
     auto* window = new QWidget(nullptr, Qt::Dialog | Qt::FramelessWindowHint);
     window->setObjectName(QStringLiteral("portalChooserWindow"));
     window->setAttribute(Qt::WA_StyledBackground, true);
-    window->setWindowTitle(title.isEmpty() ? QStringLiteral("Open Files") : title);
+    const bool isDirectory = options.value(QStringLiteral("directory")).toBool() || mode == CallMode::SaveFiles;
+    QString windowTitle = title;
+    if (windowTitle.isEmpty()) {
+        if (mode == CallMode::SaveFile) windowTitle = QStringLiteral("Save File");
+        else if (mode == CallMode::SaveFiles) windowTitle = QStringLiteral("Save Files");
+        else if (isDirectory) windowTitle = QStringLiteral("Select Folder");
+        else windowTitle = QStringLiteral("Open Files");
+    }
+    window->setWindowTitle(windowTitle);
     window->setStyleSheet(QStringLiteral(
         "QWidget#portalChooserWindow { background-color: %1; }")
         .arg(Base().name()));
@@ -216,8 +271,11 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
     layout->addWidget(page);
 
     page->setMultipleSelectionEnabled(options.value(QStringLiteral("multiple")).toBool());
-    page->setDirectoryMode(options.value(QStringLiteral("directory")).toBool());
-    if (save) page->setSaveMode(true, initialSaveName(options));
+    page->setDirectoryMode(isDirectory);
+    if (mode == CallMode::SaveFile) page->setSaveMode(true, initialSaveName(options));
+    if (options.contains(QStringLiteral("accept_label"))) {
+        page->setAcceptLabel(options.value(QStringLiteral("accept_label")).toString());
+    }
 
     std::filesystem::path start = resolveStartDirectory(options);
     // последний каталог переиспользуем только для того же вызывающего:
@@ -241,25 +299,37 @@ void PortalService::handleCall(const QDBusMessage& call, const QDBusObjectPath& 
             handle->setTransientParent(foreignParent);
     }
 
+    const QStringList filesToSave = (mode == CallMode::SaveFiles) ? filesFromOptions(options) : QStringList{};
+    const bool writable = options.value(QStringLiteral("writable")).toBool();
     connect(request, &PortalRequest::closeRequested, this,
             [this, key]() { finishSession(key, 1, {}); });
     connect(page, &Widgets::FileChooserDialog::closeRequested, this,
             [this, key]() { finishSession(key, 1, {}); });
     connect(page, &Widgets::FileChooserDialog::fileChosen, this,
-            [this, key](const QString& path) {
+            [this, key, filesToSave, writable](const QString& path) {
                 QVariantMap results;
-                results.insert(QStringLiteral("uris"),
-                               QStringList{QUrl::fromLocalFile(path).toString()});
+                QStringList uris;
+                if (!filesToSave.isEmpty()) {
+                    uris.reserve(filesToSave.size());
+                    const QDir dir(path);
+                    for (const QString& f : filesToSave)
+                        uris << QUrl::fromLocalFile(dir.filePath(f)).toString();
+                } else {
+                    uris << QUrl::fromLocalFile(path).toString();
+                }
+                results.insert(QStringLiteral("uris"), uris);
+                if (writable) results.insert(QStringLiteral("writable"), true);
                 finishSession(key, 0, results);
             });
     connect(page, &Widgets::FileChooserDialog::filesChosen, this,
-            [this, key](const QStringList& paths) {
+            [this, key, writable](const QStringList& paths) {
                 QStringList uris;
                 uris.reserve(paths.size());
                 for (const QString& path : paths)
                     uris << QUrl::fromLocalFile(path).toString();
                 QVariantMap results;
                 results.insert(QStringLiteral("uris"), uris);
+                if (writable) results.insert(QStringLiteral("writable"), true);
                 finishSession(key, 0, results);
             });
 

@@ -98,7 +98,7 @@ void FileChooserDialog::setupUi() {
         if (m_miller) m_miller->refresh();
     });
 
-    // низ: адресная строка, под ней кнопки cancel/open
+    // низ: адресная строка как в основном окне с кнопками действий справа
     m_statusBar = new TuiStatusBar(this);
     connect(m_statusBar, &TuiStatusBar::pathEntered, this,
             [this](const std::filesystem::path& dir) { setDirectory(dir); });
@@ -109,7 +109,7 @@ void FileChooserDialog::setupUi() {
     connect(m_statusBar, &TuiStatusBar::filterDismissed, this, [this]() {
         if (m_miller) m_miller->setFilter(QString());
     });
-    // счётчик файлов отключён: снизу путь, действие подтверждается кнопками в нижней панели
+    // счётчик файлов отключён: в строке путь, действие подтверждается кнопками справа
     m_statusBar->setItemStatsVisible(false);
     connect(m_miller, &MillerViewContainer::messageEmitted, this,
             [this](const QString& msg) {
@@ -127,29 +127,23 @@ void FileChooserDialog::setupUi() {
                 if (m_statusBar) m_statusBar->activateFilterWithText(text);
             });
 
-    mainLayout->addWidget(m_statusBar);
-
-    m_actionBar = new QWidget(this);
-    m_actionBar->setObjectName(QStringLiteral("chooserActionBar"));
-    m_actionBar->setAttribute(Qt::WA_StyledBackground, true);
-    auto* actionLayout = new QHBoxLayout(m_actionBar);
-    actionLayout->setContentsMargins(8, 4, 8, 6);
-    actionLayout->setSpacing(8);
-    actionLayout->addStretch(1);
-
-    m_cancelBtn = new QPushButton(QStringLiteral("Cancel"), m_actionBar);
-    m_openBtn = new QPushButton(QStringLiteral("Open"), m_actionBar);
+    m_cancelBtn = new QPushButton(QStringLiteral("Cancel"), m_statusBar);
+    m_openBtn = new QPushButton(QStringLiteral("Open"), m_statusBar);
     m_cancelBtn->setObjectName(QStringLiteral("chooserCancelBtn"));
     m_openBtn->setObjectName(QStringLiteral("chooserOpenBtn"));
+    m_cancelBtn->setFont(Theme::getMonospaceFont(9));
+    m_openBtn->setFont(Theme::getMonospaceFont(9, QFont::Bold));
     m_cancelBtn->setAutoDefault(false);
     m_openBtn->setAutoDefault(false);
-    m_cancelBtn->setFixedHeight(26);
-    m_openBtn->setFixedHeight(26);
+    m_cancelBtn->setCursor(Qt::PointingHandCursor);
+    m_openBtn->setCursor(Qt::PointingHandCursor);
     connect(m_cancelBtn, &QPushButton::clicked, this, [this]() { emit closeRequested(); });
     connect(m_openBtn, &QPushButton::clicked, this, [this]() { acceptCurrent(); });
-    actionLayout->addWidget(m_cancelBtn, 0, Qt::AlignVCenter);
-    actionLayout->addWidget(m_openBtn, 0, Qt::AlignVCenter);
-    mainLayout->addWidget(m_actionBar);
+
+    m_statusBar->addTrailingWidget(m_cancelBtn);
+    m_statusBar->addTrailingWidget(m_openBtn);
+
+    mainLayout->addWidget(m_statusBar);
 
     // esc закрывает диалог из любого места, в т.ч. когда фокус в колонках
     auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -167,6 +161,15 @@ void FileChooserDialog::setupUi() {
         connect(sc, &QShortcut::activated, this, [this]() {
             if (m_statusBar) m_statusBar->focusPathInput();
         });
+    }
+
+    const QList<QKeySequence> acceptKeys{QKeySequence(Qt::CTRL | Qt::Key_Return),
+                                         QKeySequence(Qt::CTRL | Qt::Key_Enter),
+                                         QKeySequence(QStringLiteral("Alt+O"))};
+    for (const auto& key : acceptKeys) {
+        auto* sc = new QShortcut(key, this);
+        sc->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(sc, &QShortcut::activated, this, [this]() { acceptCurrent(); });
     }
 
     updateTheme();
@@ -214,11 +217,16 @@ void FileChooserDialog::setMultipleSelectionEnabled(bool enabled) {
     if (m_miller) m_miller->setMultiSelectEnabled(enabled);
 }
 
-void FileChooserDialog::setDirectoryMode(bool enabled) { m_directoryMode = enabled; }
+void FileChooserDialog::setDirectoryMode(bool enabled) {
+    m_directoryMode = enabled;
+    if (m_openBtn && !m_saveMode) {
+        m_openBtn->setText(enabled ? QStringLiteral("Select Folder") : m_acceptLabel);
+    }
+}
 
 void FileChooserDialog::setAcceptLabel(const QString& label) {
     m_acceptLabel = label.trimmed().isEmpty() ? QStringLiteral("Open") : label.trimmed();
-    if (m_openBtn && !m_saveMode) m_openBtn->setText(m_acceptLabel);
+    if (m_openBtn && !m_saveMode) m_openBtn->setText(m_directoryMode ? QStringLiteral("Select Folder") : m_acceptLabel);
 }
 
 void FileChooserDialog::setSaveMode(bool enabled, const QString& initialName) {
@@ -231,7 +239,7 @@ void FileChooserDialog::setSaveMode(bool enabled, const QString& initialName) {
             m_nameEdit->clear();
         }
     }
-    if (m_openBtn) m_openBtn->setText(enabled ? QStringLiteral("Save") : m_acceptLabel);
+    if (m_openBtn) m_openBtn->setText(enabled ? QStringLiteral("Save") : (m_directoryMode ? QStringLiteral("Select Folder") : m_acceptLabel));
 }
 
 void FileChooserDialog::focusPrimaryInput() {
@@ -253,7 +261,15 @@ void FileChooserDialog::onDirectoryChanged(const std::filesystem::path& dir) {
 }
 
 void FileChooserDialog::onFileActivated(const std::filesystem::path& path) {
-    if (m_directoryMode) return; // в режиме каталогов файлы не выбираются
+    if (m_directoryMode) {
+        // в режиме выбора папки активация папки выбирает её
+        std::error_code ec;
+        if (std::filesystem::is_directory(path, ec) && !ec) {
+            emit fileChosen(QString::fromUtf8(path.c_str()));
+            return;
+        }
+        return;
+    }
     if (m_saveMode) {
         // двойной клик/enter по файлу в режиме сохранения подставляет имя
         if (m_nameEdit) {

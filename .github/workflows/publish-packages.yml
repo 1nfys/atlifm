@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "release tag, example: v1.0.3 (empty = latest release)"
+        description: "release tag, example: v1.0.4 (empty = latest release)"
         required: false
         default: ""
       targets:

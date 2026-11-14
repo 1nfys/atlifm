@@ -17,6 +17,7 @@
 #include "atlifm-portal/PortalService.hpp"
 #include "atlifm-widgets/FirstRunDialog.hpp"
 #include "atlifm-widgets/MainWindow.hpp"
+#include "atlifm-core/UndoManager.hpp"
 #include <QPixmapCache>
 #include <cstring>
 #if defined(__GLIBC__)
@@ -45,7 +46,7 @@ int main(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--file-manager") == 0) {
             QCoreApplication app(argc, argv);
             QCoreApplication::setApplicationName("atlifm");
-            QCoreApplication::setApplicationVersion("1.0.3");
+            QCoreApplication::setApplicationVersion("1.0.4");
             QCoreApplication::setOrganizationName("atlifm");
             Portal::FileManagerService service;
             return service.start() ? app.exec() : 1;
@@ -53,7 +54,7 @@ int main(int argc, char* argv[]) {
     }
 
     QCoreApplication::setApplicationName("atlifm");
-    QCoreApplication::setApplicationVersion("1.0.3");
+    QCoreApplication::setApplicationVersion("1.0.4");
     QCoreApplication::setOrganizationName("atlifm");
 
     // омархи ставит gtk тему глобально а мы рисуем все через fusion и свою палитру
@@ -66,6 +67,8 @@ int main(int argc, char* argv[]) {
     // значок окна для wayland и иксов
     app.setWindowIcon(QIcon(QStringLiteral(":/atlifm.png")));
     qAddPostRoutine(Core::XdgUtils::cleanupSudoSession);
+    qAddPostRoutine(Core::UndoManager::cleanupSessionBackups);
+    Core::UndoManager::cleanupStaleBackups();
 
     app.setStyle(QStyleFactory::create("Fusion"));
 

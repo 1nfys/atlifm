@@ -11,6 +11,9 @@
 #include <unistd.h>
 #include <QStandardPaths>
 #include <QFile>
+#include <signal.h>
+#include <sys/types.h>
+#include <cerrno>
 #include "XdgUtils.hpp"
 
 namespace Core {
@@ -34,6 +37,26 @@ struct UndoAction {
     QString description;
 };
 
+inline std::filesystem::path undoBackupsBaseDir() {
+    const char* home = std::getenv("HOME");
+    if (home) {
+        return std::filesystem::path(home) / ".cache/atlifm/undo_backups";
+    }
+    return std::filesystem::temp_directory_path() / "atlifm_undo_backups";
+}
+
+inline std::filesystem::path sessionBackupRootDir() {
+    static std::filesystem::path s_dir = []() {
+        std::error_code ec;
+        std::filesystem::path base = undoBackupsBaseDir();
+        pid_t pid = ::getpid();
+        std::filesystem::path sessionDir = base / ("session_" + std::to_string(pid));
+        std::filesystem::create_directories(sessionDir, ec);
+        return sessionDir;
+    }();
+    return s_dir;
+}
+
 // сохраняем файл перед перезаписью
 inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
     std::error_code ec;
@@ -49,20 +72,8 @@ inline std::filesystem::path stashForUndo(const std::filesystem::path& target) {
     auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
     std::string uniqueFolder = std::to_string(timestamp) + "_" + std::to_string(s_counter.fetch_add(1));
 
-    const char* home = std::getenv("HOME");
-    std::filesystem::path backupDir;
-    if (home) {
-        backupDir = std::filesystem::path(home) / ".cache/atlifm/undo_backups" / uniqueFolder;
-        std::filesystem::create_directories(backupDir, ec);
-    } else {
-        // безопасная временная папка чтобы не подменили симлинком
-        std::string tmpl = (std::filesystem::temp_directory_path() / "atlifm_undo_XXXXXX").string();
-        if (!::mkdtemp(tmpl.data())) return {};
-        std::filesystem::permissions(tmpl,
-            std::filesystem::perms::owner_all,
-            std::filesystem::perm_options::replace, ec);
-        backupDir = tmpl;
-    }
+    std::filesystem::path backupDir = sessionBackupRootDir() / uniqueFolder;
+    std::filesystem::create_directories(backupDir, ec);
 
     std::filesystem::path backupPath = backupDir / target.filename();
 
@@ -508,8 +519,58 @@ public:
         return false;
     }
 
+    ~UndoManager() {
+        cleanupSessionBackups();
+    }
+
+    static void cleanupSessionBackups() {
+        std::error_code ec;
+        const auto dir = sessionBackupRootDir();
+        if (std::filesystem::exists(dir, ec)) {
+            std::filesystem::remove_all(dir, ec);
+        }
+        const auto base = undoBackupsBaseDir();
+        if (std::filesystem::exists(base, ec) && std::filesystem::is_empty(base, ec)) {
+            std::filesystem::remove(base, ec);
+        }
+    }
+
+    static void cleanupStaleBackups() {
+        std::error_code ec;
+        const auto base = undoBackupsBaseDir();
+        if (!std::filesystem::exists(base, ec)) return;
+
+        pid_t myPid = ::getpid();
+        for (const auto& entry : std::filesystem::directory_iterator(base, ec)) {
+            if (ec) break;
+            const auto filename = entry.path().filename().string();
+            if (filename.rfind("session_", 0) == 0) {
+                std::string pidStr = filename.substr(8);
+                try {
+                    pid_t pid = std::stoi(pidStr);
+                    if (pid == myPid) continue;
+                    if (::kill(pid, 0) == -1 && errno == ESRCH) {
+                        std::error_code rmEc;
+                        std::filesystem::remove_all(entry.path(), rmEc);
+                    }
+                } catch (...) {
+                    std::error_code rmEc;
+                    std::filesystem::remove_all(entry.path(), rmEc);
+                }
+            } else {
+                std::error_code rmEc;
+                std::filesystem::remove_all(entry.path(), rmEc);
+            }
+        }
+        if (std::filesystem::exists(base, ec) && std::filesystem::is_empty(base, ec)) {
+            std::filesystem::remove(base, ec);
+        }
+    }
+
 private:
-    UndoManager() = default;
+    UndoManager() {
+        cleanupStaleBackups();
+    }
     mutable std::mutex m_mutex;
     std::vector<UndoAction> m_history;
     std::vector<UndoAction> m_redoStack;
