@@ -5,8 +5,10 @@
 #include "../atlifm-core/XdgUtils.hpp"
 #include "../atlifm-dnd/DragDropHandler.hpp"
 #include "../atlifm-theme/Theme.hpp"
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QShortcut>
 #include <QVBoxLayout>
 
@@ -16,6 +18,11 @@ FileChooserDialog::FileChooserDialog(QWidget* parent)
     : QWidget(parent) {
     setObjectName(QStringLiteral("fileChooserPage"));
     setupUi();
+    if (qApp) qApp->installEventFilter(this);
+}
+
+FileChooserDialog::~FileChooserDialog() {
+    if (qApp) qApp->removeEventFilter(this);
 }
 
 void FileChooserDialog::setupUi() {
@@ -75,6 +82,9 @@ void FileChooserDialog::setupUi() {
     // навигация из колонок обновляет активное место закладок и путь внизу
     connect(m_miller, &MillerViewContainer::directoryChanged, this,
             [this](const std::filesystem::path& dir) { onDirectoryChanged(dir); });
+    // боковые кнопки мыши и навигация по истории из колонок
+    connect(m_miller, &MillerViewContainer::navigateHistoryBackRequested, this, &FileChooserDialog::goBack);
+    connect(m_miller, &MillerViewContainer::navigateHistoryForwardRequested, this, &FileChooserDialog::goForward);
     connect(m_bookmarksBar, &BookmarksBar::navigateRequested, this,
             [this](const std::filesystem::path& dir) { setDirectory(dir); });
     // двойной клик/enter по файлу в колонках выбор файла
@@ -172,6 +182,20 @@ void FileChooserDialog::setupUi() {
         connect(sc, &QShortcut::activated, this, [this]() { acceptCurrent(); });
     }
 
+    auto* backSc = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Left), this);
+    backSc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(backSc, &QShortcut::activated, this, [this]() {
+        if (m_nameEdit && m_nameEdit->hasFocus()) return;
+        goBack();
+    });
+
+    auto* fwdSc = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Right), this);
+    fwdSc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(fwdSc, &QShortcut::activated, this, [this]() {
+        if (m_nameEdit && m_nameEdit->hasFocus()) return;
+        goForward();
+    });
+
     updateTheme();
 }
 
@@ -251,12 +275,78 @@ void FileChooserDialog::focusPrimaryInput() {
     }
 }
 
-// каталог колонок изменился: активное место в закладках и путь внизу
+bool FileChooserDialog::canGoBack() const {
+    return !m_backHistory.empty();
+}
+
+bool FileChooserDialog::canGoForward() const {
+    return !m_forwardHistory.empty();
+}
+
+void FileChooserDialog::goBack() {
+    if (m_miller && m_miller->isArchiveViewActive()) {
+        m_miller->leaveArchive();
+        return;
+    }
+    if (m_miller && m_miller->tryPluginOverride(QStringLiteral("go_back"))) return;
+
+    while (!m_backHistory.empty()) {
+        const auto prev = m_backHistory.back();
+        m_backHistory.pop_back();
+        std::error_code ec;
+        if (std::filesystem::is_directory(prev, ec) && !ec) {
+            const auto exited = m_currentPath;
+            m_forwardHistory.push_back(exited);
+            m_currentPath = prev;
+            m_isNavigatingHistory = true;
+            m_miller->setDirectory(prev, exited);
+            m_isNavigatingHistory = false;
+            onDirectoryChanged(prev);
+            return;
+        }
+    }
+}
+
+void FileChooserDialog::goForward() {
+    if (m_miller && m_miller->isArchiveViewActive()) return;
+    if (m_miller && m_miller->tryPluginOverride(QStringLiteral("go_forward"))) return;
+
+    while (!m_forwardHistory.empty()) {
+        const auto next = m_forwardHistory.back();
+        m_forwardHistory.pop_back();
+        std::error_code ec;
+        if (std::filesystem::is_directory(next, ec) && !ec) {
+            const auto exited = m_currentPath;
+            m_backHistory.push_back(exited);
+            m_currentPath = next;
+            m_isNavigatingHistory = true;
+            m_miller->setDirectory(next);
+            m_isNavigatingHistory = false;
+            onDirectoryChanged(next);
+            return;
+        }
+    }
+}
+
+// каталог колонок изменился: активное место в закладках, путь внизу и запись истории
 void FileChooserDialog::onDirectoryChanged(const std::filesystem::path& dir) {
-    if (m_bookmarksBar) m_bookmarksBar->setActiveDirectory(dir);
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::path canon = std::filesystem::canonical(std::filesystem::absolute(dir), ec);
+    if (ec) canon = dir;
+
+    if (m_currentPath != canon) {
+        if (!m_isNavigatingHistory && !m_currentPath.empty()) {
+            m_backHistory.push_back(m_currentPath);
+            m_forwardHistory.clear();
+        }
+        m_currentPath = canon;
+    }
+
+    if (m_bookmarksBar) m_bookmarksBar->setActiveDirectory(canon);
     if (m_statusBar) {
-        m_statusBar->setPath(dir);
-        m_statusBar->setMountStats(dir);
+        m_statusBar->setPath(canon);
+        m_statusBar->setMountStats(canon);
     }
 }
 
@@ -399,7 +489,41 @@ void FileChooserDialog::updateTheme() {
     if (m_statusBar) m_statusBar->updateTheme();
 }
 
+void FileChooserDialog::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::BackButton) {
+        goBack();
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::ForwardButton) {
+        goForward();
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
 bool FileChooserDialog::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::BackButton || me->button() == Qt::ForwardButton) {
+            auto* w = qobject_cast<QWidget*>(watched);
+            bool belongsToChooser = (w == this || this->isAncestorOf(w));
+            if (!belongsToChooser && window() && window() != this && !window()->inherits("QMainWindow")) {
+                belongsToChooser = (w == window() || window()->isAncestorOf(w));
+            }
+            if (w && isVisible() && belongsToChooser) {
+                if (event->type() == QEvent::MouseButtonPress) {
+                    if (me->button() == Qt::BackButton) {
+                        goBack();
+                    } else if (me->button() == Qt::ForwardButton) {
+                        goForward();
+                    }
+                }
+                return true;
+            }
+        }
+    }
     if (watched == m_nameEdit && event->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(event);
         if (ke->key() == Qt::Key_Escape) {

@@ -9,6 +9,7 @@
 
 class QHBoxLayout;
 class QLabel;
+class QMouseEvent;
 class QSplitter;
 
 namespace Widgets {
@@ -25,6 +26,7 @@ class FileChooserDialog : public QWidget {
 
 public:
     explicit FileChooserDialog(QWidget* parent = nullptr);
+    ~FileChooserDialog() override;
 
     // каталог в колонках, несуществующее или не каталог игнорируется
     void setDirectory(const std::filesystem::path& dir);
@@ -32,6 +34,12 @@ public:
     // выделенный в колонках файл (пусто, если ничего или выделен каталог)
     std::filesystem::path selectedPath() const;
     void updateTheme();
+
+    // навигация по истории назад и вперед
+    void goBack();
+    void goForward();
+    bool canGoBack() const;
+    bool canGoForward() const;
 
     // режимы портального backend'а xdg (системный «выбрать файл» из браузера, см. portalservice)
     void setMultipleSelectionEnabled(bool enabled);
@@ -51,6 +59,7 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     void setupUi();
@@ -76,6 +85,12 @@ private:
     bool m_saveMode{false};
     // надпись главной кнопки вне режима save (open по умолчанию)
     QString m_acceptLabel{QStringLiteral("Open")};
+
+    // история навигации по каталогам
+    std::filesystem::path m_currentPath;
+    std::vector<std::filesystem::path> m_backHistory;
+    std::vector<std::filesystem::path> m_forwardHistory;
+    bool m_isNavigatingHistory{false};
 };
 
 }

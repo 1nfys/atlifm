@@ -18,7 +18,7 @@ pkgbase = atlifm
 	source = atlifm.metainfo.xml
 	source = atlifm.1
 	sha256sums = SKIP
-	sha256sums = 72a70aadb44cc805770a7c5c65f41a46cb5c6539a02b5d71a71e8a897bae2d46
-	sha256sums = 87341bcde9eee1846daa81df59ddd231c0c8259dccccd575da7c2d4a5802ed5a
+	sha256sums = 1ba90e1a2dbcf630725240b769a6a55bbd55d5189084370da9688a839e6eff02
+	sha256sums = 3da3dc0d08aaae3a2fe0de8d4d7d5fac697c490abf18f656ab8c5260fa70158a
 
 pkgname = atlifm
