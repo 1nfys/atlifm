@@ -14,7 +14,7 @@ source=("atlifm-$pkgver-fixed.tar.gz"
         "atlifm.1")
 sha256sums=('SKIP'
             '1ba90e1a2dbcf630725240b769a6a55bbd55d5189084370da9688a839e6eff02'
-            '3da3dc0d08aaae3a2fe0de8d4d7d5fac697c490abf18f656ab8c5260fa70158a')
+            '04aa4b983f11c01ef3806717dffaf1cb8204c74601b5455383a35b497528ddfd')
 
 build() {
 	cmake -S "$pkgname-$pkgver" -B build -G Ninja \
