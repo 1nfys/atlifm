@@ -308,6 +308,8 @@ void FileSystemModel::setDirectory(const std::filesystem::path& dirPath) {
 
     m_currentDir = dirPath;
     m_filter.clear();
+    // при смене каталога сбрасываем старый список выделенных путей
+    m_selectedPaths.clear();
 
     if (m_dirWatcher) {
         const auto dirs = m_dirWatcher->directories();
@@ -316,11 +318,13 @@ void FileSystemModel::setDirectory(const std::filesystem::path& dirPath) {
         }
         std::filesystem::path watchTarget = dirPath;
         const char* homeEnv = std::getenv("HOME");
-        if (homeEnv) {
-            std::string trashDir = (std::filesystem::path(homeEnv) / ".local/share/Trash").lexically_normal().string();
-            if (dirPath.lexically_normal().string() == trashDir) {
-                watchTarget = dirPath / "files";
-            }
+        std::string leafName = dirPath.filename().string();
+        std::string lowerLeaf = QString::fromStdString(leafName).toLower().toStdString();
+        bool isExtTrash = (lowerLeaf == ".trash" || lowerLeaf.rfind(".trash-", 0) == 0);
+        if (homeEnv && dirPath.lexically_normal().string() == (std::filesystem::path(homeEnv) / ".local/share/Trash").lexically_normal().string()) {
+            watchTarget = dirPath / "files";
+        } else if (isExtTrash) {
+            watchTarget = dirPath / "files";
         }
         std::error_code ec;
         if (std::filesystem::exists(watchTarget, ec) && std::filesystem::is_directory(watchTarget, ec)) {
@@ -359,7 +363,10 @@ void FileSystemModel::scanDirectoryAsync(std::filesystem::path dirPath, uint64_t
     std::string dirStr = dirPath.lexically_normal().string();
     const char* homeEnv = std::getenv("HOME");
     std::string trashDir = homeEnv ? (std::filesystem::path(homeEnv) / ".local/share/Trash").lexically_normal().string() : "";
-    bool isVirtualTrashRoot = (!trashDir.empty() && dirStr == trashDir);
+    std::string leafName = dirPath.filename().string();
+    std::string lowerLeaf = QString::fromStdString(leafName).toLower().toStdString();
+    bool isExtTrash = (lowerLeaf == ".trash" || lowerLeaf.rfind(".trash-", 0) == 0);
+    bool isVirtualTrashRoot = (!trashDir.empty() && dirStr == trashDir) || isExtTrash;
     if (isVirtualTrashRoot) {
         std::filesystem::path actualFilesDir = dirPath / "files";
         std::error_code ecTrash;
@@ -1635,19 +1642,22 @@ int FileSystemModel::findRowByPath(const std::filesystem::path& path) const {
         }
     }
 
-    // 3. совпадение по имени файла
-    for (size_t i = 0; i < m_displayedItems.size(); ++i) {
-        if (m_displayedItems[i].path.filename().string() == targetFilename ||
-            m_displayedItems[i].path.filename().string() == path.string()) {
-            return static_cast<int>(i);
+    // 3. совпадение по имени файла только если родитель совпадает или не указан
+    const bool parentMatches = path.parent_path().empty() || path.parent_path() == m_currentDir;
+    if (parentMatches) {
+        for (size_t i = 0; i < m_displayedItems.size(); ++i) {
+            if (m_displayedItems[i].path.filename().string() == targetFilename ||
+                m_displayedItems[i].path.filename().string() == path.string()) {
+                return static_cast<int>(i);
+            }
         }
-    }
 
-    // 4. совпадение по имени файла без учёта регистра
-    QString targetFilenameQ = QString::fromUtf8(targetFilename.c_str());
-    for (size_t i = 0; i < m_displayedItems.size(); ++i) {
-        if (QString::compare(m_displayedItems[i].filename, targetFilenameQ, Qt::CaseInsensitive) == 0) {
-            return static_cast<int>(i);
+        // 4. совпадение по имени файла без учета регистра
+        QString targetFilenameQ = QString::fromUtf8(targetFilename.c_str());
+        for (size_t i = 0; i < m_displayedItems.size(); ++i) {
+            if (QString::compare(m_displayedItems[i].filename, targetFilenameQ, Qt::CaseInsensitive) == 0) {
+                return static_cast<int>(i);
+            }
         }
     }
 

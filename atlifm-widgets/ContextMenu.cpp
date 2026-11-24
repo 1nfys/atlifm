@@ -73,7 +73,7 @@ void TuiContextMenu::hideEvent(QHideEvent* event) {
 
 void TuiContextMenu::populateMenu() {
     bool hasSelection = !m_selectedPaths.empty();
-    bool inTrash = (m_currentDir.string().find(".local/share/Trash") != std::string::npos);
+    bool inTrash = Core::XdgUtils::isInsideTrash(m_currentDir);
 
     const QClipboard* clipboard = QApplication::clipboard();
     const QMimeData* mimeData = clipboard->mimeData();
@@ -148,7 +148,7 @@ void TuiContextMenu::populateMenu() {
         actRename->setShortcut(QKeySequence(Qt::Key_F2));
         connect(actRename, &QAction::triggered, this, &TuiContextMenu::renameRequested);
 
-        bool isInsideTrash = inTrash || (targetPath.string().find(".local/share/Trash") != std::string::npos);
+        bool isInsideTrash = inTrash || Core::XdgUtils::isInsideTrash(targetPath);
         if (isInsideTrash) {
             auto actDelPerm = addAction("\U000F01B4 Delete Permanently\tDel");
             connect(actDelPerm, &QAction::triggered, this, &TuiContextMenu::deletePermanentlyRequested);
@@ -161,6 +161,14 @@ void TuiContextMenu::populateMenu() {
 
             auto actDelPerm = addAction("\U000F01B4 Delete Permanently\tShift+Del");
             connect(actDelPerm, &QAction::triggered, this, &TuiContextMenu::deletePermanentlyRequested);
+        }
+
+        if (targetPath != "/" && Core::XdgUtils::isPathMounted(targetPath)) {
+            addSeparator();
+            auto actUnmount = addAction("\U000F05D3 Unmount");
+            connect(actUnmount, &QAction::triggered, this, [this, targetPath]() {
+                emit unmountRequested(targetPath);
+            });
         }
 
         addSeparator();
@@ -276,6 +284,14 @@ void TuiContextMenu::populateMenu() {
 
         auto actBm = addAction("\U000F00BA Bookmark This Folder");
         connect(actBm, &QAction::triggered, this, &TuiContextMenu::bookmarkRequested);
+
+        if (m_currentDir != "/" && Core::XdgUtils::isPathMounted(m_currentDir)) {
+            addSeparator();
+            auto actUnmount = addAction("\U000F05D3 Unmount");
+            connect(actUnmount, &QAction::triggered, this, [this]() {
+                emit unmountRequested(m_currentDir);
+            });
+        }
 
         // plugins, для фона применяются к текущему каталогу
         addPluginsSubmenu();

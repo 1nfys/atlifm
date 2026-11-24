@@ -7,7 +7,7 @@ proj=$(CDPATH= cd -- "$here/../.." && pwd)
 
 root=${1:-$proj}
 out=${2:-$proj/dist}
-version=${3:-${VERSION:-1.0.4}}
+version=${3:-${VERSION:-1.0.5}}
 
 name=atlifm-$version-fixed.tar.gz
 

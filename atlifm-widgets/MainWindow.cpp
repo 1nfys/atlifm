@@ -308,6 +308,32 @@ void MainWindow::setupUi() {
         m_bookmarksBar->refresh();
         m_millerView->refresh();
     });
+    connect(m_bookmarksBar, &BookmarksBar::driveUnmounted, this,
+            [this](const std::filesystem::path& path) {
+                const char* home = std::getenv("HOME");
+                std::filesystem::path homePath = home ? home : "/";
+                QString pStr = QString::fromUtf8(path.c_str());
+                if (m_tabBar) {
+                    for (int i = 0; i < m_tabBar->count(); ++i) {
+                        QString cur = QString::fromUtf8(m_tabBar->tabState(i).currentPath.c_str());
+                        if (cur == pStr || cur.startsWith(pStr + QLatin1Char('/'))) {
+                            m_tabBar->tabState(i).navigateTo(homePath);
+                        }
+                    }
+                }
+                if (m_millerView) {
+                    QString active = QString::fromUtf8(m_millerView->currentDirectory().c_str());
+                    if (active == pStr || active.startsWith(pStr + QLatin1Char('/'))) {
+                        m_millerView->setDirectory(homePath);
+                    } else {
+                        m_millerView->refresh();
+                    }
+                }
+            });
+    connect(m_bookmarksBar, &BookmarksBar::messageEmitted, this,
+            [this](const QString& msg, bool /*is_error*/) {
+                if (m_statusBar) m_statusBar->setProgressMessage(msg, true);
+            });
     // свойства из закладок и дисков тот же оверлей, что и пкм и properties
     connect(m_bookmarksBar, &BookmarksBar::propertiesRequested, this, &MainWindow::showPropertiesOverlay);
     connect(m_millerView, &MillerViewContainer::itemSelected, this, [this](const std::filesystem::path& p) {
@@ -342,11 +368,11 @@ void MainWindow::setupUi() {
     });
     connect(m_millerView, &MillerViewContainer::statusUpdated, this, &MainWindow::onStatusUpdated);
     connect(m_millerView, &MillerViewContainer::messageEmitted, this, [this](const QString& msg) {
-        m_statusBar->setProgressMessage(msg);
+        m_statusBar->setProgressMessage(msg, true);
     });
     // плагины c++: notify() и refresh() из host api
     connect(&NativePluginHost::instance(), &NativePluginHost::messageEmitted, this,
-            [this](const QString& msg) { m_statusBar->setProgressMessage(msg); });
+            [this](const QString& msg) { m_statusBar->setProgressMessage(msg, true); });
     connect(&NativePluginHost::instance(), &NativePluginHost::refreshRequested, this, [this]() {
         if (m_millerView) m_millerView->refresh();
         if (m_bookmarksBar) m_bookmarksBar->refresh();
@@ -1838,6 +1864,7 @@ void MainWindow::saveCurrentTabState() {
         tab.sudoRoot = m_millerView->sudoRoot();
         tab.selectedItem = m_millerView->focusedPath();
         tab.selectedPaths = m_millerView->multiSelectedPaths();
+        tab.filterQuery = (m_statusBar && m_statusBar->isFilterActive()) ? m_statusBar->filterQuery() : QString();
         if (m_millerView->isArchiveViewActive()) {
             tab.openArchivePath = m_millerView->archivePath();
             tab.archiveMember = m_millerView->archiveSelectedMember();
@@ -1895,6 +1922,16 @@ void MainWindow::restoreTabState(int index) {
 
     if (m_bookmarksBar) {
         m_bookmarksBar->setActiveDirectory(curTab.currentPath);
+    }
+    // восстанавливаем фильтр поиска для переключенной вкладки
+    if (m_statusBar) {
+        if (!curTab.filterQuery.isEmpty()) {
+            m_statusBar->activateFilterWithText(curTab.filterQuery);
+            if (m_millerView) m_millerView->setFilter(curTab.filterQuery);
+        } else if (m_statusBar->isFilterActive()) {
+            m_statusBar->deactivateFilter();
+            if (m_millerView) m_millerView->setFilter("");
+        }
     }
     m_lastTabIndex = index;
 }
@@ -1966,6 +2003,15 @@ void MainWindow::onCloseOtherTabsRequested(int index) {
 }
 
 void MainWindow::onDirectoryChanged(const std::filesystem::path& path) {
+    // при переходе в новый каталог сбрасываем фильтр поиска
+    if (!m_isSwitchingTab) {
+        if (m_statusBar && m_statusBar->isFilterActive()) {
+            m_statusBar->deactivateFilter();
+        }
+        if (m_millerView) {
+            m_millerView->setFilter("");
+        }
+    }
     QString pathQ = QString::fromUtf8(path.c_str());
     if (m_tabBar->count() > 0 && m_tabBar->currentIndex() >= 0) {
         auto& tab = m_tabBar->currentTabState();

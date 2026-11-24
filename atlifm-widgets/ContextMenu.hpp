@@ -37,6 +37,7 @@ signals:
     void newFileRequested();
     void bookmarkRequested();
     void propertiesRequested();
+    void unmountRequested(const std::filesystem::path& path);
     void sortModeRequested(int mode); // 0 = имя, 1 = размер, 2 = дата, 3 = тип
     // сторонний плагин из подменю plugins, id это имя файла конфига без .conf (см. core::plugins)
     void pluginRequested(const QString& pluginId);

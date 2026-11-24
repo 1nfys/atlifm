@@ -135,23 +135,33 @@ void FileItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     if (maxNameWidth > 20) {
         if (isSymlink && !linkTarget.isEmpty()) {
             QString arrow = " -> ";
-            int nameW = fm.horizontalAdvance(name);
             int arrowW = fm.horizontalAdvance(arrow);
-            painter->setPen(textColor);
-            painter->drawText(x, yMid, name);
+            int minTargetW = fm.horizontalAdvance("...");
+            int nameMaxW = maxNameWidth - arrowW - minTargetW;
 
-            if (nameW + arrowW < maxNameWidth) {
-                painter->setPen(isSelected ? AccentFg() : Dim());
-                painter->drawText(x + nameW, yMid, arrow);
+            if (nameMaxW > 20) {
+                QString elidedName = fm.elidedText(name, Qt::ElideMiddle, nameMaxW);
+                int elidedNameW = fm.horizontalAdvance(elidedName);
+                painter->setPen(textColor);
+                painter->drawText(x, yMid, elidedName);
 
-                QFont italicFont = font;
-                italicFont.setItalic(true);
-                painter->setFont(italicFont);
-                QFontMetrics ifm(italicFont);
-                int targetMaxW = maxNameWidth - nameW - arrowW;
-                QString elidedTarget = ifm.elidedText(linkTarget, Qt::ElideMiddle, targetMaxW);
-                painter->drawText(x + nameW + arrowW, yMid, elidedTarget);
-                painter->setFont(font);
+                int remainW = maxNameWidth - elidedNameW - arrowW;
+                if (remainW >= minTargetW) {
+                    painter->setPen(isSelected ? AccentFg() : Dim());
+                    painter->drawText(x + elidedNameW, yMid, arrow);
+
+                    QFont italicFont = font;
+                    italicFont.setItalic(true);
+                    painter->setFont(italicFont);
+                    QFontMetrics ifm(italicFont);
+                    QString elidedTarget = ifm.elidedText(linkTarget, Qt::ElideMiddle, remainW);
+                    painter->drawText(x + elidedNameW + arrowW, yMid, elidedTarget);
+                    painter->setFont(font);
+                }
+            } else {
+                painter->setPen(textColor);
+                QString elidedName = fm.elidedText(name, Qt::ElideMiddle, maxNameWidth);
+                painter->drawText(x, yMid, elidedName);
             }
         } else {
             painter->setPen(textColor);

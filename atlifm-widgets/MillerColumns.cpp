@@ -96,10 +96,14 @@ MillerListView::MillerListView(bool isParentPane, QWidget* parent)
 }
 
 void MillerListView::updateGeometries() {
+    int prevVal = verticalScrollBar() ? verticalScrollBar()->value() : 0;
     QListView::updateGeometries();
     if (verticalScrollBar() && verticalScrollBar()->maximum() > 0) {
         verticalScrollBar()->setRange(verticalScrollBar()->minimum(),
                                       verticalScrollBar()->maximum() + 72);
+        if (prevVal > verticalScrollBar()->value()) {
+            verticalScrollBar()->setValue(std::min(prevVal, verticalScrollBar()->maximum()));
+        }
     }
 }
 
@@ -462,6 +466,9 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
     if ((event->buttons() & Qt::LeftButton) && !m_isRubberBanding
         && (event->modifiers() & Qt::ShiftModifier) && model()) {
         QModelIndex hovered = indexAt(event->pos());
+        if (!hovered.isValid() && event->pos().y() >= viewport()->height() - 20 && model()->rowCount() > 0) {
+            hovered = model()->index(model()->rowCount() - 1, 0);
+        }
         if (hovered.isValid()) {
             int count = model()->rowCount();
             // якорь резолвим по пути: после фонового пересканирования строка могла сместиться
@@ -483,7 +490,7 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
             }
             m_preservingAnchor = false;
             scrollTo(hovered, QAbstractItemView::EnsureVisible);
-            // release обрабатываем сами, иначе qt применит свой устаревший диапазон от anchor
+            // release обрабатываем сами иначе qt применит свой устаревший диапазон от якоря
             m_skipBaseRelease = true;
         }
         event->accept();
@@ -499,15 +506,22 @@ void MillerListView::mouseMoveEvent(QMouseEvent* event) {
             m_rubberBand->setGeometry(box);
         }
 
-        // автопрокрутка у верхнего/нижнего края: выделение работает, когда список выше окна
+        // автопрокрутка у верхнего и нижнего края
+        int prevScroll = verticalScrollBar() ? verticalScrollBar()->value() : 0;
         if (event->pos().y() < 20) {
             verticalScrollBar()->triggerAction(QAbstractSlider::SliderSingleStepSub);
         } else if (event->pos().y() > viewport()->height() - 20) {
-            verticalScrollBar()->triggerAction(QAbstractSlider::SliderSingleStepAdd);
+            if (verticalScrollBar() && verticalScrollBar()->value() < verticalScrollBar()->maximum() - 72) {
+                verticalScrollBar()->triggerAction(QAbstractSlider::SliderSingleStepAdd);
+            }
+        }
+        int curScroll = verticalScrollBar() ? verticalScrollBar()->value() : 0;
+        int scrollDelta = curScroll - prevScroll;
+        if (scrollDelta != 0) {
+            m_rubberBandOrigin.ry() -= scrollDelta;
         }
 
         // пересечение рамки с visualrect элементов в реальном времени
-        // (работает и для архивного листинга с виртуальными путями)
         if (model()) {
             QItemSelection selection;
             for (int r = 0; r < model()->rowCount(); ++r) {
@@ -598,15 +612,20 @@ void MillerListView::mouseReleaseEvent(QMouseEvent* event) {
         if (m_rubberBand) {
             m_rubberBand->hide();
         }
-        // курсор/anchor = ряд, с которого начался жест, а не последний выделенный;
-        // noupdate, т.к. setcurrentindex() вызывает clearandselect и затирал рамку
+        // курсор или якорь берем из точки отпускания или последнего индекса
+        // noupdate так как setcurrentindex вызывает clearandselect и затирал рамку
         int dist = (event->pos() - m_rubberBandOrigin).manhattanLength();
         if (dist >= QApplication::startDragDistance()) {
             int anchorRow = -1;
             if (m_dragStartIndex.isValid()) {
                 anchorRow = m_dragStartIndex.row();
-            } else if (selectionModel() && !selectionModel()->selectedIndexes().isEmpty()) {
-                anchorRow = selectionModel()->selectedIndexes().first().row();
+            } else {
+                QModelIndex atPos = indexAt(event->pos());
+                if (atPos.isValid()) {
+                    anchorRow = atPos.row();
+                } else if (selectionModel() && !selectionModel()->selectedIndexes().isEmpty()) {
+                    anchorRow = selectionModel()->selectedIndexes().last().row();
+                }
             }
             if (anchorRow >= 0 && model() && anchorRow < model()->rowCount() && selectionModel()) {
                 QModelIndex anchorIdx = model()->index(anchorRow, 0);
@@ -1113,6 +1132,34 @@ void MillerViewContainer::setupUi() {
         connect(menu, &TuiContextMenu::renameRequested, this, &MillerViewContainer::renameCurrent);
         connect(menu, &TuiContextMenu::trashRequested, this, &MillerViewContainer::trashSelection);
         connect(menu, &TuiContextMenu::deletePermanentlyRequested, this, &MillerViewContainer::deletePermanentlySelection);
+        // размонтирование смонтированного каталога прямо из контекстного меню
+        connect(menu, &TuiContextMenu::unmountRequested, this, [this](const std::filesystem::path& p) {
+            const QString pStr = QString::fromUtf8(p.c_str());
+            const char* home = std::getenv("HOME");
+            const std::filesystem::path homePath = home ? home : "/";
+            const QString active = QString::fromUtf8(m_currentDir.c_str());
+            if (active == pStr || active.startsWith(pStr + QLatin1Char('/'))) {
+                setDirectory(homePath);
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+            QString err;
+            const bool ok = Core::XdgUtils::unmountPath(p, err, window());
+            if (ok) {
+                refresh();
+                emit messageEmitted(QStringLiteral("Unmounted %1").arg(pStr));
+            } else {
+                refresh();
+                if (err.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive)) {
+                    emit messageEmitted(QStringLiteral("Unmount cancelled"));
+                } else {
+                    const QString msg = err.isEmpty()
+                        ? QStringLiteral("Failed to unmount %1").arg(pStr)
+                        : QStringLiteral("Unmount failed: %1").arg(err);
+                    emit messageEmitted(msg);
+                    TuiConfirmPopup::alert(this, "Unmount Failed", msg);
+                }
+            }
+        });
         connect(menu, &TuiContextMenu::compressRequested, this, &MillerViewContainer::compressSelection);
         connect(menu, &TuiContextMenu::extractHereRequested, this, &MillerViewContainer::extractHere);
         connect(menu, &TuiContextMenu::extractInRequested, this, [this, sel]() {
@@ -1222,6 +1269,33 @@ void MillerViewContainer::setupUi() {
         connect(menu, &TuiContextMenu::propertiesRequested, this, [this, sel, parentDir]() {
             if (tryPluginOverrideWith("properties", sel, parentDir)) return;
             showPropertiesFor(sel.empty() ? parentDir : sel.front());
+        });
+        connect(menu, &TuiContextMenu::unmountRequested, this, [this](const std::filesystem::path& p) {
+            const QString pStr = QString::fromUtf8(p.c_str());
+            const char* home = std::getenv("HOME");
+            const std::filesystem::path homePath = home ? home : "/";
+            const QString active = QString::fromUtf8(m_currentDir.c_str());
+            if (active == pStr || active.startsWith(pStr + QLatin1Char('/'))) {
+                setDirectory(homePath);
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+            QString err;
+            const bool ok = Core::XdgUtils::unmountPath(p, err, window());
+            if (ok) {
+                refresh();
+                emit messageEmitted(QStringLiteral("Unmounted %1").arg(pStr));
+            } else {
+                refresh();
+                if (err.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive)) {
+                    emit messageEmitted(QStringLiteral("Unmount cancelled"));
+                } else {
+                    const QString msg = err.isEmpty()
+                        ? QStringLiteral("Failed to unmount %1").arg(pStr)
+                        : QStringLiteral("Unmount failed: %1").arg(err);
+                    emit messageEmitted(msg);
+                    TuiConfirmPopup::alert(this, "Unmount Failed", msg);
+                }
+            }
         });
         connect(menu, &TuiContextMenu::pluginRequested, this, [this, sel, parentDir](const QString& id) {
             runPluginByIdIn(id, sel, parentDir, QString(), false, true);
@@ -1447,13 +1521,19 @@ void MillerViewContainer::applySortToModel(const std::filesystem::path& dir,
                                            Models::FileSystemModel* model) {
     if (dir.empty() || !model) return;
     const QString v = readSavedSort(dir);
-    if (v.isEmpty()) return; // нет записи оставляем текущий режим
+    if (v.isEmpty()) {
+        model->setSortMode(0, true);
+        return;
+    }
     const QStringList parts = v.split('|');
     bool okMode = false;
     bool okAsc = false;
     const int mode = parts.value(0).toInt(&okMode);
     const int asc = parts.value(1).toInt(&okAsc);
-    if (!okMode || !okAsc || mode < 0 || mode > 3) return;
+    if (!okMode || !okAsc || mode < 0 || mode > 3) {
+        model->setSortMode(0, true);
+        return;
+    }
     model->setSortMode(mode, asc != 0);
 }
 
@@ -1519,7 +1599,12 @@ void MillerViewContainer::setDirectory(const std::filesystem::path& path, const 
     }
     syncParentViewToCurrentDir();
 
-    // сбрасываем якоря выделения при переходе в новый каталог
+    // сбрасываем якоря и выделение при переходе в новый каталог
+    if (m_centerModel) {
+        m_centerModel->clearSelection();
+    }
+    m_centerView->clearSelection();
+    m_parentView->clearSelection();
     m_centerView->clearAnchor();
     m_parentView->clearAnchor();
 
@@ -1971,7 +2056,7 @@ void MillerViewContainer::sudoOpenCurrent(const std::filesystem::path& targetDir
 
 void MillerViewContainer::clearTrashBin() {
     if (tryPluginOverride("clear_trash")) return;
-    if (Core::XdgUtils::clearTrash()) {
+    if (Core::XdgUtils::clearTrash(m_currentDir)) {
         refresh();
         emit messageEmitted("Trash cleared");
     }
@@ -2930,20 +3015,33 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
     if (checkPluginOverride && tryPluginOverrideWith("trash", sel, m_currentDir)) return;
     if (sel.empty()) return;
 
-    // если элементы уже в корзине, перемещение в корзину бессмысленно, удаляем навсегда
-    const char* homeEnv = std::getenv("HOME");
-    const std::filesystem::path trashRoot = homeEnv
-        ? std::filesystem::path(homeEnv) / ".local/share/Trash" : std::filesystem::path();
-    bool inTrash = (!trashRoot.empty() && isInsideDir(m_currentDir, trashRoot));
-    if (!inTrash) {
+    for (const auto& p : sel) {
+        if (Core::XdgUtils::isPathMounted(p)) {
+            TuiConfirmPopup::alert(this, "Cannot Delete",
+                QStringLiteral("Cannot delete %1: this path is a mounted filesystem, please unmount it first")
+                    .arg(QString::fromUtf8(p.c_str())));
+            return;
+        }
+    }
+
+    // если элементы уже в корзине или в каталоге без прав на запись например /mnt
+    // то перемещение в корзину невозможно и сразу запускаем постоянное удаление
+    bool mustDeletePermanently = Core::XdgUtils::isInsideTrash(m_currentDir);
+    if (!mustDeletePermanently) {
         for (const auto& p : sel) {
-            if (!trashRoot.empty() && isInsideDir(p, trashRoot)) {
-                inTrash = true;
+            if (Core::XdgUtils::isInsideTrash(p)) {
+                mustDeletePermanently = true;
+                break;
+            }
+            auto parent = p.parent_path();
+            if (parent.empty()) parent = "/";
+            if (::access(parent.c_str(), W_OK) != 0) {
+                mustDeletePermanently = true;
                 break;
             }
         }
     }
-    if (inTrash) {
+    if (mustDeletePermanently) {
         deletePathsPermanently(sel, false);
         return;
     }
@@ -2960,6 +3058,7 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
         QStringLiteral("io"),
         [self, sel, neighbour](Core::Tasks::TaskContext& ctx) mutable {
             std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
+            std::vector<std::filesystem::path> failedPaths;
             QStringList errors;
             for (size_t i = 0; i < sel.size(); ++i) {
                 if (ctx.cancelled()) break;
@@ -2969,6 +3068,7 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
                 if (Core::XdgUtils::moveToTrash(one, err, &movedOne)) {
                     moved.insert(moved.end(), movedOne.begin(), movedOne.end());
                 } else {
+                    failedPaths.push_back(sel[i]);
                     const QString message = err.isEmpty()
                         ? QStringLiteral("Failed to trash %1").arg(QString::fromUtf8(sel[i].c_str()))
                         : err;
@@ -2987,7 +3087,7 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
             const bool cancelled = ctx.cancelled();
             const QString error = errors.join(QChar('\n'));
             const bool ok = errors.isEmpty();
-            QMetaObject::invokeMethod(qApp, [self, ok, cancelled, error, moved, neighbour, sel]() mutable {
+            QMetaObject::invokeMethod(qApp, [self, ok, cancelled, error, moved, neighbour, sel, failedPaths]() mutable {
                 if (!self) return;
                 if (!moved.empty()) {
                     std::vector<Core::UndoItem> undoItems;
@@ -2996,16 +3096,18 @@ void MillerViewContainer::trashPaths(const std::vector<std::filesystem::path>& s
                         undoItems.push_back({orig, inTrash, {}});
                     }
                     Core::UndoManager::instance().recordMultiTrash(undoItems, "Trash");
+                    if (!neighbour.empty()) self->selectPathAfterRefresh(neighbour);
+                    self->refresh();
                 }
-                if (!neighbour.empty()) self->selectPathAfterRefresh(neighbour);
-                self->refresh();
                 if (cancelled) {
                     self->messageEmitted(QString("Trash cancelled (%1 moved)").arg(moved.size()));
                 } else if (ok) {
                     self->messageEmitted(QString("Trash %1").arg(sel.size()));
-                } else {
-                    self->messageEmitted(QString("Trash %1: %2 failed").arg(moved.size()).arg(sel.size() - moved.size()));
-                    TuiConfirmPopup::alert(self.data(), "Trash Error", error);
+                } else if (!failedPaths.empty()) {
+                    // сбрасываем статус перемещения в корзину перед запросом удаления
+                    self->messageEmitted(QString());
+                    // элементы не поддерживающие корзину сразу предлагаем удалить без лишних ошибок
+                    self->deletePathsPermanently(failedPaths, false);
                 }
             }, Qt::QueuedConnection);
         });
@@ -3023,10 +3125,45 @@ void MillerViewContainer::deletePathsPermanently(const std::vector<std::filesyst
     if (checkPluginOverride && tryPluginOverrideWith("delete_perm", sel, m_currentDir)) return;
     if (sel.empty()) return;
 
+    for (const auto& p : sel) {
+        if (Core::XdgUtils::isPathMounted(p)) {
+            TuiConfirmPopup::alert(this, "Cannot Delete",
+                QStringLiteral("Cannot delete %1: this path is a mounted filesystem, please unmount it first")
+                    .arg(QString::fromUtf8(p.c_str())));
+            return;
+        }
+    }
+
     bool confirmed = TuiConfirmPopup::ask(this, "",
-        "Are you sure?",
+        "Delete?",
         "Yes", "No", true);
-    if (confirmed) {
+    if (!confirmed) {
+        emit messageEmitted(QString());
+        return;
+    }
+
+    // проверяем требуются ли root привилегии для удаления
+    bool needsElevation = false;
+    for (const auto& p : sel) {
+        auto parent = p.parent_path();
+        if (parent.empty()) parent = "/";
+        if (::access(parent.c_str(), W_OK) != 0 || ::access(p.c_str(), W_OK) != 0) {
+            needsElevation = true;
+            break;
+        }
+    }
+    if (needsElevation && !Core::XdgUtils::sudoTicketAlive()) {
+        QString authErr;
+        if (!Core::XdgUtils::ensureSudoAuthenticated(this, authErr)) {
+            if (!authErr.isEmpty() && !authErr.contains("cancelled", Qt::CaseInsensitive)) {
+                emit messageEmitted(authErr);
+            } else {
+                emit messageEmitted(QStringLiteral("Delete cancelled"));
+            }
+            return;
+        }
+    }
+
         std::filesystem::path neighbour = computeNeighbourPath(sel);
         emit messageEmitted(QString("Deleting %1...").arg(sel.size()));
         QPointer<MillerViewContainer> self(this);
@@ -3066,6 +3203,21 @@ void MillerViewContainer::deletePathsPermanently(const std::vector<std::filesyst
                         }
                     } else {
                         self->refresh();
+                        // если ошибка авторизации в фоновом потоке запрашиваем пароль в gui потоке
+                        if (err.contains("Authentication required") || err.contains("permission denied") || err.contains("Permission denied")) {
+                            QString authErr;
+                            if (Core::XdgUtils::ensureSudoAuthenticated(self.data(), authErr)) {
+                                std::vector<std::filesystem::path> remaining;
+                                for (const auto& p : sel) {
+                                    std::error_code ec;
+                                    if (std::filesystem::exists(p, ec)) remaining.push_back(p);
+                                }
+                                if (!remaining.empty()) {
+                                    self->deletePathsPermanently(remaining, false);
+                                    return;
+                                }
+                            }
+                        }
                         QString detail = err;
                         if (removed > 0 || detail.isEmpty()) {
                             if (!detail.isEmpty()) detail += QStringLiteral("\n\n");
@@ -3076,7 +3228,6 @@ void MillerViewContainer::deletePathsPermanently(const std::vector<std::filesyst
                     }
                 }, Qt::QueuedConnection);
             });
-    }
 }
 
 void MillerViewContainer::compressSelection(const QString& format) {

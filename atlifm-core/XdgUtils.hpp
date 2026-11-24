@@ -97,10 +97,22 @@ public:
     static bool moveToTrash(const std::vector<std::filesystem::path>& paths, QString& outError,
                             std::vector<std::pair<std::filesystem::path, std::filesystem::path>>* outMoved = nullptr);
 
+    // проверка находится ли путь в каталоге корзины
+    static bool isInsideTrash(const std::filesystem::path& path);
+
     // удаление без корзины с поддержкой отмены через токен
     static bool deletePermanently(const std::vector<std::filesystem::path>& paths, QString& outError,
                                   std::shared_ptr<std::atomic<bool>> cancelToken = nullptr);
-    static bool clearTrash();
+
+    // очистка корзины в домашнем каталоге и на подключенных томах
+    static bool clearTrash(const std::filesystem::path& targetDir = {});
+
+    // размонтирование диска или раздела: gio, udisks2 и привилегированный umount
+    static bool unmountPath(const std::filesystem::path& path, QString& outError,
+                            QWidget* parentWidget = nullptr);
+
+    // проверка является ли путь смонтированной файловой системой
+    static bool isPathMounted(const std::filesystem::path& path);
 
     static bool createArchive(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& destinationArchive,

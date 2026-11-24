@@ -53,6 +53,8 @@ signals:
     void removeBookmarkRequested(const std::filesystem::path& path);
     void trashClearRequested();
     void propertiesRequested(const std::filesystem::path& path);
+    void driveUnmounted(const std::filesystem::path& path);
+    void messageEmitted(const QString& msg, bool isError = false);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

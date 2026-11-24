@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QElapsedTimer>
 #include <QMimeDatabase>
 #include <QMimeType>
@@ -607,6 +608,8 @@ void XdgUtils::sudoDebugLog(const QString& line) {
         QTextStream ts(&f);
         ts << QDateTime::currentDateTime().toString(QStringLiteral("[dd.MM HH:mm:ss.zzz] "))
            << line << '\n';
+        ts.flush();
+        f.flush();
     }
 }
 
@@ -643,7 +646,8 @@ QStringList XdgUtils::pkexecArgs(const QStringList& cmd) {
     // в пользовательском каталоге даёт запуск от root
     QString exe = XdgUtils::resolveTrustedExe(cmd.first());
     if (exe.isEmpty()) exe = cmd.first();
-    QStringList args{QStringLiteral("pkexec"), exe};
+    // disable internal agent предотвращает зависание pkexec при отсутствии polkit агента
+    QStringList args{QStringLiteral("pkexec"), QStringLiteral("--disable-internal-agent"), exe};
     args += cmd.mid(1);
     return args;
 }
@@ -769,6 +773,25 @@ bool XdgUtils::ensureSudoAuthenticated(QWidget* parentWidget, QString& outError)
     const bool ticketAlive = sudoProbe(2500);
     sudoDebugLog(QStringLiteral("ensure: probe ticket_alive=%1").arg(ticketAlive ? 1 : 0));
     if (ticketAlive) return true;
+
+    // сначала пробуем авторизацию через polkit если доступен
+    if (polkitAvailable()) {
+        int pkExit = -1;
+        QString pkErr;
+        bool ok = runCommand(pkexecArgs({QStringLiteral("true")}), 120000, nullptr, &pkErr, &pkExit);
+        if (ok && pkExit == 0) {
+            return true;
+        }
+        const bool isCancelled = (pkExit == 126) ||
+                                 (pkExit != 127 && (pkErr.contains(QStringLiteral("dismissed"), Qt::CaseInsensitive) ||
+                                                    pkErr.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive) ||
+                                                    pkErr.contains(QStringLiteral("canceled"), Qt::CaseInsensitive)));
+        if (isCancelled) {
+            outError = QStringLiteral("Authentication cancelled");
+            return false;
+        }
+        // если код не 126 и ошибка не отмена продолжаем ко встроенному sudo
+    }
 
     if (QStandardPaths::findExecutable("sudo").isEmpty()) {
         outError = QString("sudo is not installed on this system");
@@ -926,7 +949,23 @@ bool runPrivileged(const QStringList& argv, int timeoutMs,
         return XdgUtils::runCommand(XdgUtils::rootArgs(argv), timeoutMs, out, outErr, outExitCode);
     }
     if (XdgUtils::polkitAvailable()) {
-        return XdgUtils::runCommand(XdgUtils::pkexecArgs(argv), timeoutMs, out, outErr, outExitCode);
+        int pkExit = -1;
+        const int pkTimeout = std::max(timeoutMs, 120000);
+        if (XdgUtils::runCommand(XdgUtils::pkexecArgs(argv), pkTimeout, out, outErr, &pkExit) && pkExit == 0) {
+            if (outExitCode) *outExitCode = 0;
+            return true;
+        }
+        QString pkErr = outErr ? *outErr : QString();
+        const bool isCancelled = (pkExit == 126) ||
+                                 (pkExit != 127 && (pkErr.contains(QStringLiteral("dismissed"), Qt::CaseInsensitive) ||
+                                                    pkErr.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive) ||
+                                                    pkErr.contains(QStringLiteral("canceled"), Qt::CaseInsensitive)));
+        if (isCancelled) {
+            if (outErr) *outErr = QStringLiteral("Authentication cancelled");
+            if (outExitCode) *outExitCode = 126;
+            return false;
+        }
+        // если код не 126 и ошибка не отмена продолжаем ко встроенному sudo ниже
     }
     if (QThread::currentThread() != qApp->thread()) {
         if (outErr) *outErr = QStringLiteral("Authentication required");
@@ -1173,7 +1212,13 @@ bool XdgUtils::moveToTrash(const std::vector<std::filesystem::path>& paths, QStr
 
         std::filesystem::rename(p, dest, ec);
         if (ec) {
-            errorMsg = QString("Failed to trash %1: %2").arg(QString::fromUtf8(p.c_str()), QString::fromStdString(ec.message()));
+            if (ec.value() == EXDEV || ec == std::errc::invalid_argument) {
+                errorMsg = QString("Failed to trash %1: cross-device link not supported")
+                               .arg(QString::fromUtf8(p.c_str()));
+            } else {
+                errorMsg = QString("Failed to trash %1: %2")
+                               .arg(QString::fromUtf8(p.c_str()), QString::fromStdString(ec.message()));
+            }
             return false;
         }
         if (outMoved) {
@@ -1194,30 +1239,313 @@ bool XdgUtils::moveToTrash(const std::vector<std::filesystem::path>& paths, QStr
     return true;
 }
 
-// ec в remove_all/create_directories, чтобы не падать на eacces
-bool XdgUtils::clearTrash() {
-    const char* home = std::getenv("HOME");
-    if (!home) return false;
-    std::filesystem::path trashBase = std::filesystem::path(home) / ".local/share/Trash";
-    std::error_code ec;
-    std::filesystem::remove_all(trashBase / "files", ec);
-    if (!ec) std::filesystem::remove_all(trashBase / "info", ec);
-    if (!ec) std::filesystem::create_directories(trashBase / "files", ec);
-    if (!ec) std::filesystem::create_directories(trashBase / "info", ec);
-    if (ec) return false;
+bool XdgUtils::isInsideTrash(const std::filesystem::path& path) {
+    if (path.empty()) return false;
 
+    // проверка домашней корзины
+    const char* home = std::getenv("HOME");
+    if (home) {
+        std::filesystem::path homeTrash = std::filesystem::path(home) / ".local/share/Trash";
+        std::string pStr = path.lexically_normal().string();
+        std::string tStr = homeTrash.lexically_normal().string();
+        if (pStr == tStr || pStr.rfind(tStr + "/", 0) == 0) {
+            return true;
+        }
+    }
+
+    // проверка сегментов пути для корзин внешних дисков
+    for (const auto& part : path) {
+        std::string s = part.string();
+        if (s == ".Trash" || s == ".trash") {
+            return true;
+        }
+        std::string lower = QString::fromStdString(s).toLower().toStdString();
+        if (lower.starts_with(".trash-") || lower.starts_with("trash-")) {
+            size_t sep = lower.find('-');
+            if (sep != std::string::npos && sep + 1 < lower.size()) {
+                bool allDigits = true;
+                for (size_t i = sep + 1; i < lower.size(); ++i) {
+                    if (!std::isdigit(static_cast<unsigned char>(lower[i]))) {
+                        allDigits = false;
+                        break;
+                    }
+                }
+                if (allDigits) return true;
+            }
+        }
+    }
+    return false;
+}
+
+// очистка корзины в домашнем каталоге и на всех подключенных томах
+bool XdgUtils::clearTrash(const std::filesystem::path& targetDir) {
+    std::error_code ec;
+
+    // 1. очистка домашней корзины
+    const char* home = std::getenv("HOME");
+    if (home) {
+        std::filesystem::path trashBase = std::filesystem::path(home) / ".local/share/Trash";
+        std::filesystem::remove_all(trashBase / "files", ec);
+        std::filesystem::remove_all(trashBase / "info", ec);
+        std::filesystem::create_directories(trashBase / "files", ec);
+        std::filesystem::create_directories(trashBase / "info", ec);
+    }
+
+    // вспомогательная очистка подпапок корзины
+    auto cleanTrashDir = [](const std::filesystem::path& base) {
+        std::error_code dirEc;
+        if (!std::filesystem::exists(base, dirEc)) return;
+        const std::vector<std::string> subs = {"files", "info", "expunged"};
+        for (const auto& sub : subs) {
+            std::filesystem::path subPath = base / sub;
+            if (std::filesystem::exists(subPath, dirEc)) {
+                for (const auto& entry : std::filesystem::directory_iterator(subPath, dirEc)) {
+                    std::error_code rmEc;
+                    std::filesystem::remove_all(entry.path(), rmEc);
+                    if (rmEc) {
+                        QProcess proc;
+                        const QStringList argv = rootArgs({"rm", "-rf", "--", QString::fromUtf8(entry.path().c_str())});
+                        proc.start(argv.first(), argv.mid(1));
+                        proc.waitForFinished(1500);
+                    }
+                }
+            }
+        }
+        for (const auto& entry : std::filesystem::directory_iterator(base, dirEc)) {
+            std::string fn = entry.path().filename().string();
+            if (fn != "files" && fn != "info" && fn != "expunged") {
+                std::error_code rmEc;
+                std::filesystem::remove_all(entry.path(), rmEc);
+            }
+        }
+    };
+
+    // 2. очистка корзины целевого каталога если передан путь
+    if (!targetDir.empty() && isInsideTrash(targetDir)) {
+        std::filesystem::path cur = targetDir;
+        while (!cur.empty() && cur != cur.parent_path()) {
+            std::string name = cur.filename().string();
+            std::string lower = QString::fromStdString(name).toLower().toStdString();
+            if (lower == ".trash" || lower.starts_with(".trash-") || lower.starts_with("trash-") || lower == "trash") {
+                cleanTrashDir(cur);
+                break;
+            }
+            cur = cur.parent_path();
+        }
+    }
+
+    // 3. очистка корзин на всех подключенных томах
+    const std::string uidStr = std::to_string(::getuid());
+    const std::vector<std::string> trashNames = {
+        ".Trash-" + uidStr,
+        "trash-" + uidStr,
+        ".trash-" + uidStr,
+        "Trash-" + uidStr,
+        ".Trash/" + uidStr,
+        ".Trash-1000",
+        "trash-1000",
+        ".trash-1000"
+    };
+
+    for (const auto& storage : QStorageInfo::mountedVolumes()) {
+        if (!storage.isValid() || !storage.isReady()) continue;
+        QString root = storage.rootPath();
+        if (root.isEmpty()) continue;
+        std::filesystem::path mountPath(root.toUtf8().toStdString());
+        for (const auto& tname : trashNames) {
+            std::filesystem::path candidate = mountPath / tname;
+            std::error_code exEc;
+            if (std::filesystem::exists(candidate, exEc)) {
+                cleanTrashDir(candidate);
+            }
+        }
+    }
+
+    // 4. запуск gio trash empty
     QProcess proc;
     proc.start("gio", {"trash", "--empty"});
-    proc.waitForFinished(1500);
-    // gio может отсутствовать, очистка каталогов уже сработала; успех =
-    // процесс завершился сам, «всё ещё бежит» после таймаута не успех
-    if (proc.error() == QProcess::FailedToStart) return true;
+    proc.waitForFinished(2000);
     if (proc.state() != QProcess::NotRunning) {
         proc.kill();
         proc.waitForFinished(300);
+    }
+
+    return true;
+}
+
+bool XdgUtils::isPathMounted(const std::filesystem::path& path) {
+    if (path.empty()) return false;
+    QString pathStr = QString::fromUtf8(path.lexically_normal().c_str());
+    while (pathStr.endsWith(QLatin1Char('/')) && pathStr.length() > 1) {
+        pathStr.chop(1);
+    }
+    QFile mountsFile(QStringLiteral("/proc/mounts"));
+    if (mountsFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QString content = QString::fromUtf8(mountsFile.readAll());
+        const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString& line : lines) {
+            QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() >= 2) {
+                QString mnt = parts[1];
+                mnt.replace(QStringLiteral("\\040"), QStringLiteral(" "));
+                if (mnt == pathStr) return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool XdgUtils::unmountPath(const std::filesystem::path& path, QString& outError,
+                           QWidget* parentWidget) {
+    outError.clear();
+    QString pathStr = QString::fromUtf8(path.c_str());
+    while (pathStr.endsWith(QLatin1Char('/')) && pathStr.length() > 1) {
+        pathStr.chop(1);
+    }
+
+    sudoDebugLog(QStringLiteral("unmount: invoked path=[%1]").arg(pathStr));
+
+    if (pathStr.isEmpty() || pathStr == QLatin1String("/")) {
+        outError = QStringLiteral("Cannot unmount root filesystem");
         return false;
     }
-    return proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0;
+
+    if (!isPathMounted(path)) {
+        sudoDebugLog(QStringLiteral("unmount: already unmounted [%1]").arg(pathStr));
+        return true;
+    }
+
+    // поиск блочного устройства для точки монтирования
+    QString devPath;
+    QStorageInfo storage(pathStr);
+    if (storage.isValid() && !storage.device().isEmpty()) {
+        devPath = QString::fromUtf8(storage.device());
+    }
+    if (devPath.isEmpty() || !devPath.startsWith(QLatin1String("/dev/"))) {
+        QFile mountsFile(QStringLiteral("/proc/mounts"));
+        if (mountsFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            const QString content = QString::fromUtf8(mountsFile.readAll());
+            const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString& line : lines) {
+                QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() >= 2) {
+                    QString mnt = parts[1];
+                    mnt.replace(QStringLiteral("\\040"), QStringLiteral(" "));
+                    if (mnt == pathStr && parts[0].startsWith(QLatin1String("/dev/"))) {
+                        devPath = parts[0];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // проверка системного раздела или записи в fstab
+    bool isSystemMount = pathStr.startsWith(QLatin1String("/mnt/")) ||
+                         pathStr == QLatin1String("/mnt");
+    if (!isSystemMount) {
+        QFile fstabFile(QStringLiteral("/etc/fstab"));
+        if (fstabFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            const QString content = QString::fromUtf8(fstabFile.readAll());
+            const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString& line : lines) {
+                QString trimmed = line.trimmed();
+                if (trimmed.isEmpty() || trimmed.startsWith(QLatin1Char('#'))) continue;
+                QStringList parts = trimmed.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+                if (parts.size() >= 2 && parts[1] == pathStr) {
+                    isSystemMount = true;
+                    break;
+                }
+            }
+        }
+    }
+    sudoDebugLog(QStringLiteral("unmount: is_system=%1 dev=[%2]").arg(isSystemMount ? 1 : 0).arg(devPath));
+
+    // для съемных носителей пробуем сначала без привилегий
+    if (!isSystemMount) {
+        // 1. непривилегированное размонтирование через gio для томов gvfs
+        {
+            QByteArray out;
+            QString err;
+            int exitCode = -1;
+            if (runCommand({QStringLiteral("gio"), QStringLiteral("mount"), QStringLiteral("-u"), pathStr},
+                           3000, &out, &err, &exitCode) && exitCode == 0) {
+                if (!isPathMounted(path)) {
+                    sudoDebugLog(QStringLiteral("unmount: gio mount ok"));
+                    return true;
+                }
+            }
+        }
+
+        // 2. размонтирование через udisksctl без ожидания ввода пароля
+        if (!devPath.isEmpty() && devPath.startsWith(QLatin1String("/dev/")) &&
+            !QStandardPaths::findExecutable(QStringLiteral("udisksctl")).isEmpty()) {
+            QByteArray out;
+            QString err;
+            int exitCode = -1;
+            if (runCommand({QStringLiteral("udisksctl"), QStringLiteral("unmount"),
+                            QStringLiteral("-b"), devPath, QStringLiteral("--no-user-interaction")},
+                           3000, &out, &err, &exitCode) && exitCode == 0) {
+                if (!isPathMounted(path)) {
+                    sudoDebugLog(QStringLiteral("unmount: udisksctl no interaction ok"));
+                    return true;
+                }
+            }
+        }
+
+        // 3. прямой вызов umount без привилегий если раздел имеет флаг user в fstab
+        {
+            QByteArray out;
+            QString err;
+            int exitCode = -1;
+            if (runCommand({QStringLiteral("umount"), pathStr}, 3000, &out, &err, &exitCode) && exitCode == 0) {
+                if (!isPathMounted(path)) {
+                    sudoDebugLog(QStringLiteral("unmount: unprivileged umount ok"));
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 4. привилегированное размонтирование с автоматическим переходом на lazy unmount
+    if (isPathMounted(path)) {
+        sudoDebugLog(QStringLiteral("unmount: running privileged single shot for [%1]").arg(pathStr));
+        QByteArray out;
+        QString err;
+        int exitCode = -1;
+        const QStringList unmountCmd{
+            QStringLiteral("sh"), QStringLiteral("-c"),
+            QStringLiteral("umount \"$1\" 2>/dev/null || umount -l \"$1\""),
+            QStringLiteral("_"), pathStr
+        };
+        bool ok = runPrivileged(unmountCmd, 120000, &out, &err, &exitCode, parentWidget);
+        sudoDebugLog(QStringLiteral("unmount: privileged done ok=%1 exit=%2 err=[%3]")
+                     .arg(ok ? 1 : 0).arg(exitCode).arg(err));
+
+        if (!isPathMounted(path)) {
+            sudoDebugLog(QStringLiteral("unmount: verified unmounted"));
+            return true;
+        }
+
+        if (err.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive) ||
+            err.contains(QStringLiteral("canceled"), Qt::CaseInsensitive) ||
+            err.contains(QStringLiteral("dismissed"), Qt::CaseInsensitive) ||
+            err.contains(QStringLiteral("not authorized"), Qt::CaseInsensitive) ||
+            err.contains(QStringLiteral("denied"), Qt::CaseInsensitive)) {
+            outError = QStringLiteral("Authentication cancelled");
+            return false;
+        }
+
+        if (!err.isEmpty()) {
+            outError = err;
+        } else if (exitCode != 0) {
+            outError = QStringLiteral("Failed to unmount %1 (exit code %2)").arg(pathStr).arg(exitCode);
+        } else {
+            outError = QStringLiteral("Failed to unmount %1").arg(pathStr);
+        }
+    }
+
+    return false;
 }
 
 bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths, QString& errorMsg,
@@ -1249,23 +1577,27 @@ bool XdgUtils::deletePermanently(const std::vector<std::filesystem::path>& paths
             return false;
         }
 
-        // элемент из корзины: удаляем и его .trashinfo; сравнение по
-        // реальному префиксу каталога, а не подстроке, иначе похожий
-        // путь в середине запустит удаление .trashinfo
-        const std::string parentNorm = p.parent_path().lexically_normal().string();
-        const std::string trashNorm = trashFiles.lexically_normal().string();
-        const bool insideTrash = !trashFiles.empty() &&
-            (p.parent_path() == trashFiles ||
-             parentNorm.compare(0, trashNorm.size() + 1, trashNorm + "/") == 0);
-        if (insideTrash) {
-            std::filesystem::path infoPath = trashInfo / (p.filename().string() + ".trashinfo");
-            std::error_code infoEc;
-            std::filesystem::remove(infoPath, infoEc);
-            if (infoEc) {
-                QProcess proc;
-                const QStringList argv = rootArgs({"rm", "-f", "--", QString::fromUtf8(infoPath.c_str())});
-                proc.start(argv.first(), argv.mid(1));
-                proc.waitForFinished(1000);
+        // элемент из корзины: удаляем и его .trashinfo
+        if (isInsideTrash(p)) {
+            std::filesystem::path infoPath;
+            const std::string parentNorm = p.parent_path().lexically_normal().string();
+            const std::string trashNorm = trashFiles.lexically_normal().string();
+            if (p.parent_path().filename() == "files") {
+                infoPath = p.parent_path().parent_path() / "info" / (p.filename().string() + ".trashinfo");
+            } else if (!trashFiles.empty() &&
+                       (p.parent_path() == trashFiles ||
+                        parentNorm.compare(0, trashNorm.size() + 1, trashNorm + "/") == 0)) {
+                infoPath = trashInfo / (p.filename().string() + ".trashinfo");
+            }
+            if (!infoPath.empty()) {
+                std::error_code infoEc;
+                std::filesystem::remove(infoPath, infoEc);
+                if (infoEc) {
+                    QProcess proc;
+                    const QStringList argv = rootArgs({"rm", "-f", "--", QString::fromUtf8(infoPath.c_str())});
+                    proc.start(argv.first(), argv.mid(1));
+                    proc.waitForFinished(1000);
+                }
             }
         }
     }

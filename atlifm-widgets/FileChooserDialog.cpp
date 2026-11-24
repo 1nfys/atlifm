@@ -107,6 +107,24 @@ void FileChooserDialog::setupUi() {
         if (m_bookmarksBar) m_bookmarksBar->refresh();
         if (m_miller) m_miller->refresh();
     });
+    // при размонтировании диска выходим в домашнюю папку если находились внутри него
+    connect(m_bookmarksBar, &BookmarksBar::driveUnmounted, this,
+            [this](const std::filesystem::path& path) {
+                const char* home = std::getenv("HOME");
+                std::filesystem::path homePath = home ? home : "/";
+                QString pStr = QString::fromUtf8(path.c_str());
+                QString active = QString::fromUtf8(currentDirectory().c_str());
+                if (active == pStr || active.startsWith(pStr + QLatin1Char('/'))) {
+                    setDirectory(homePath);
+                } else if (m_miller) {
+                    m_miller->refresh();
+                }
+            });
+    // показ сообщений размонтирования в статусной строке диалога
+    connect(m_bookmarksBar, &BookmarksBar::messageEmitted, this,
+            [this](const QString& msg, bool /*is_error*/) {
+                if (m_statusBar) m_statusBar->setProgressMessage(msg, true);
+            });
 
     // низ: адресная строка как в основном окне с кнопками действий справа
     m_statusBar = new TuiStatusBar(this);
@@ -123,7 +141,7 @@ void FileChooserDialog::setupUi() {
     m_statusBar->setItemStatsVisible(false);
     connect(m_miller, &MillerViewContainer::messageEmitted, this,
             [this](const QString& msg) {
-                if (m_statusBar) m_statusBar->setProgressMessage(msg);
+                if (m_statusBar) m_statusBar->setProgressMessage(msg, true);
             });
     connect(m_miller, &MillerViewContainer::sudoModeChanged, this, [this](bool isSudo) {
         if (m_statusBar) m_statusBar->setSudoBadge(isSudo);
@@ -470,6 +488,7 @@ void FileChooserDialog::updateTheme() {
                 border: 1px solid transparent;
                 border-radius: 0px;
                 padding: 2px 14px;
+                margin-bottom: 2px;
                 font-weight: bold;
             }
             QPushButton:hover { background-color: %3; }
@@ -483,6 +502,7 @@ void FileChooserDialog::updateTheme() {
                 border: 1px solid %3;
                 border-radius: 0px;
                 padding: 2px 14px;
+                margin-bottom: 2px;
             }
         )").arg(Surface0().name(), Text().name(), Surface1().name()));
     }

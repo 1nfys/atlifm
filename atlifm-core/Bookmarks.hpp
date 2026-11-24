@@ -72,7 +72,17 @@ public:
     }
 
     static std::vector<BookmarkItem> loadDrives() {
-        std::vector<BookmarkItem> list;
+        struct DriveEntry {
+            BookmarkItem item;
+            QString baseTitle;
+            QString devPath;
+            QString devName;
+            QString parentDisk;
+            QString subvolume;
+            QString mountFolder;
+        };
+
+        std::vector<DriveEntry> entries;
 
         for (const auto& storage : QStorageInfo::mountedVolumes()) {
             if (!storage.isValid() || !storage.isReady()) continue;
@@ -135,16 +145,98 @@ public:
                 item.jumpKey = (!item.title.isEmpty()) ? item.title.front().toLower() : 'd';
             }
 
-            bool exists = false;
-            for (const auto& existing : list) {
-                if (existing.path == item.path) {
-                    exists = true;
+            QString devPath = QString::fromUtf8(storage.device());
+            QString devName;
+            QString parentDisk;
+
+            if (devPath.startsWith("/dev/")) {
+                devName = devPath.mid(5);
+                static const QRegularExpression nvmeRegex("^(nvme\\d+n\\d+|mmcblk\\d+)p(\\d+)$");
+                static const QRegularExpression sdRegex("^([a-z]+)(\\d+)$");
+                auto mNvme = nvmeRegex.match(devName);
+                if (mNvme.hasMatch()) {
+                    parentDisk = mNvme.captured(1);
+                } else {
+                    auto mSd = sdRegex.match(devName);
+                    if (mSd.hasMatch()) {
+                        parentDisk = mSd.captured(1);
+                    }
+                }
+            }
+
+            QString subvolume = QString::fromUtf8(storage.subvolume());
+            QString mountFolder = QString::fromUtf8(item.path.filename().c_str());
+
+            // дедупликация точных дубликатов того же пути или того же раздела и подтома
+            bool isDuplicate = false;
+            for (auto& existing : entries) {
+                if (existing.item.path == item.path) {
+                    isDuplicate = true;
+                    break;
+                }
+                if (!devPath.isEmpty() && devPath.startsWith("/dev/") &&
+                    existing.devPath == devPath && existing.subvolume == subvolume) {
+                    // точный дубликат отдаем предпочтение стандартным путям монтирования перед mnt
+                    if ((root.startsWith("/run/media") || root.startsWith("/media")) &&
+                        existing.item.path.string().rfind("/mnt", 0) == 0) {
+                        existing.item.path = item.path;
+                        existing.item.extraInfo = item.extraInfo;
+                        existing.mountFolder = mountFolder;
+                    }
+                    isDuplicate = true;
                     break;
                 }
             }
-            if (!exists) {
-                list.push_back(std::move(item));
+
+            if (!isDuplicate) {
+                QString baseTitle = item.title;
+                entries.push_back(DriveEntry{std::move(item), baseTitle, devPath, devName, parentDisk, subvolume, mountFolder});
             }
+        }
+
+        // подсчет смонтированных подтомов одного устройства
+        std::unordered_map<std::string, int> devCounts;
+        // подсчет разделов одного диска
+        std::unordered_map<std::string, int> parentCounts;
+        // подсчет одинаковых названий
+        std::unordered_map<std::string, int> titleCounts;
+
+        for (const auto& e : entries) {
+            if (!e.devPath.isEmpty()) {
+                devCounts[e.devPath.toStdString()]++;
+            }
+            if (!e.parentDisk.isEmpty()) {
+                parentCounts[e.parentDisk.toStdString()]++;
+            }
+            titleCounts[e.baseTitle.toStdString()]++;
+        }
+
+        // уточнение названий чтобы не было одинаковых дисков
+        std::vector<BookmarkItem> list;
+        list.reserve(entries.size());
+        for (auto& e : entries) {
+            if (e.item.path != "/") {
+                // 1. если один и тот же том смонтирован в разные точки например подтома btrfs
+                if (!e.devPath.isEmpty() && devCounts[e.devPath.toStdString()] > 1) {
+                    QString tag = e.subvolume;
+                    if (tag.startsWith('/') && tag.length() > 1) {
+                        tag = tag.mid(1);
+                    } else if (tag == "/" || tag.isEmpty()) {
+                        tag = e.mountFolder;
+                    }
+                    e.item.title = QString("%1 (%2)").arg(e.baseTitle, tag);
+                }
+                // 2. если разные разделы одного диска например sdb1 и sdb2
+                else if (!e.parentDisk.isEmpty() && parentCounts[e.parentDisk.toStdString()] > 1) {
+                    e.item.title = QString("%1 (%2)").arg(e.baseTitle, e.devName);
+                }
+                // 3. если одинаковые названия на разных дисках
+                else if (titleCounts[e.baseTitle.toStdString()] > 1 && !e.devName.isEmpty()) {
+                    e.item.title = QString("%1 (%2)").arg(e.baseTitle, e.devName);
+                }
+                e.item.jumpKey = (!e.item.title.isEmpty()) ? e.item.title.front().toLower() : 'd';
+            }
+            list.push_back(std::move(e.item));
         }
 
         return list;

@@ -8,7 +8,7 @@ why: default file managers on Linux are either gnome Nautilus with user-friendly
 
 atlifm takes terminal aesthetics (multi-pane layout, pseudographics, monospace font, zero animations) while adding mouse controls, drag and drop, tabs and previews
 
-[download v1.0.4](https://github.com/1nfys/atlifm/releases/latest) · [documentation](https://1nfys.github.io/atlifml/docs/welcome) · [downloads guide](https://1nfys.github.io/atlifml/docs/downloads)
+[download v1.0.5](https://github.com/1nfys/atlifm/releases/latest) · [documentation](https://1nfys.github.io/atlifml/docs/welcome) · [downloads guide](https://1nfys.github.io/atlifml/docs/downloads)
 
 ---
 
@@ -160,7 +160,7 @@ prebuilt packages for **x86_64** and **aarch64** are attached to every release:
 
 **https://github.com/1nfys/atlifm/releases/latest**
 
-the release page also contains the source tarball and the Debian source package. command examples below use the `1.0.4` artifacts; replace the version with the release you downloaded.
+the release page also contains the source tarball and the Debian source package. command examples below use the `1.0.5` artifacts; replace the version with the release you downloaded.
 
 ### supported distributions
 
@@ -183,7 +183,7 @@ Debian 12, Ubuntu 24.04 and other older releases ship qt older than 6.5, which i
 download the pacman package and install it locally:
 
 ```bash
-sudo pacman -U atlifm-1.0.4-1-x86_64.pkg.tar.zst
+sudo pacman -U atlifm-1.0.5-1-x86_64.pkg.tar.zst
 ```
 
 or build the `pkgbuild` from this repository:
@@ -207,8 +207,8 @@ sudo apt install atlifm
 debian and ubuntu can also install the `.deb` from the release page:
 
 ```bash
-sudo apt install ./atlifm_1.0.4-1_amd64.deb     # x86_64
-sudo apt install ./atlifm_1.0.4-1_arm64.deb     # aarch64
+sudo apt install ./atlifm_1.0.5-1_amd64.deb     # x86_64
+sudo apt install ./atlifm_1.0.5-1_arm64.deb     # aarch64
 ```
 
 ### fedora / rhel
@@ -231,7 +231,7 @@ sudo dnf install atlifm
 alternatively, install the rpm from the release page:
 
 ```bash
-sudo dnf install ./atlifm-1.0.4-1.fc44.x86_64.rpm
+sudo dnf install ./atlifm-1.0.5-1.fc44.x86_64.rpm
 ```
 
 ### opensuse build service
@@ -279,7 +279,7 @@ sudo dnf install atlifm
 ### alpine linux
 
 ```bash
-sudo apk add --allow-untrusted ./atlifm-1.0.4-r0-x86_64.apk
+sudo apk add --allow-untrusted ./atlifm-1.0.5-r0-x86_64.apk
 ```
 
 ### appimage (glibc 2.38+)
@@ -287,8 +287,8 @@ sudo apk add --allow-untrusted ./atlifm-1.0.4-r0-x86_64.apk
 the appimage is self-contained and needs no installation:
 
 ```bash
-chmod +x atlifm-1.0.4-x86_64.appimage
-./atlifm-1.0.4-x86_64.appimage
+chmod +x atlifm-1.0.5-x86_64.appimage
+./atlifm-1.0.5-x86_64.appimage
 ```
 
 ### from source

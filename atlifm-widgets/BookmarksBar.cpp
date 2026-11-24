@@ -293,7 +293,7 @@ void BookmarksBar::setupUi() {
             emit copyPathRequested(p);
         });
 
-        if (pathStr.contains(".local/share/Trash")) {
+        if (Core::XdgUtils::isInsideTrash(p)) {
             auto actClear = menu.addAction("\U000F0A7A Clear Bin");
             connect(actClear, &QAction::triggered, this, [this]() {
                 emit trashClearRequested();
@@ -313,9 +313,11 @@ void BookmarksBar::setupUi() {
                 break;
             }
         }
-        if (isRemovableDrive) {
+        const bool isMounted = (p != std::filesystem::path("/")) &&
+                               (isRemovableDrive || Core::XdgUtils::isPathMounted(p));
+        if (isMounted) {
             menu.addSeparator();
-            auto actUnmount = menu.addAction("\U000F05D3 Unmount / Eject");
+            auto actUnmount = menu.addAction("\U000F05D3 Unmount");
             connect(actUnmount, &QAction::triggered, this, [this, p]() {
                 unmountDrive(p);
             });
@@ -340,36 +342,33 @@ void BookmarksBar::setupUi() {
 
 void BookmarksBar::unmountDrive(const std::filesystem::path& path) {
     const QString pathStr = QString::fromUtf8(path.c_str());
-    QPointer<BookmarksBar> self(this);
-    QProcess* proc = new QProcess(this);
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            proc, [self, proc, pathStr](int exitCode) {
-        proc->deleteLater();
-        if (exitCode != 0) {
-            QProcess* udisks = new QProcess(self.data());
-            connect(udisks, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                    udisks, [self, udisks, pathStr](int uCode) {
-                udisks->deleteLater();
-                if (uCode != 0) {
-                    QProcess::execute(QStringLiteral("umount"), {pathStr});
-                }
-                if (self) self->refresh();
-            });
-            udisks->start(QStringLiteral("udisksctl"), {QStringLiteral("unmount"), QStringLiteral("-p"), pathStr});
-            if (!udisks->waitForStarted(500)) {
-                udisks->deleteLater();
-                QProcess::execute(QStringLiteral("umount"), {pathStr});
-                if (self) self->refresh();
-            }
-        } else {
-            if (self) self->refresh();
+    const char* home = std::getenv("HOME");
+    const std::filesystem::path homePath = home ? home : "/";
+
+    if (!m_activeDir.empty()) {
+        QString activeStr = QString::fromUtf8(m_activeDir.c_str());
+        if (activeStr == pathStr || activeStr.startsWith(pathStr + QLatin1Char('/'))) {
+            emit navigateRequested(homePath);
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         }
-    });
-    proc->start(QStringLiteral("gio"), {QStringLiteral("mount"), QStringLiteral("-u"), pathStr});
-    if (!proc->waitForStarted(500)) {
-        proc->deleteLater();
-        QProcess::execute(QStringLiteral("umount"), {pathStr});
+    }
+
+    QString err;
+    const bool ok = Core::XdgUtils::unmountPath(path, err, window());
+    if (ok) {
+        emit driveUnmounted(path);
         refresh();
+        emit messageEmitted(QStringLiteral("Unmounted %1").arg(pathStr), false);
+    } else {
+        refresh();
+        if (err.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive)) {
+            emit messageEmitted(QStringLiteral("Unmount cancelled"), false);
+        } else {
+            const QString msg = err.isEmpty()
+                ? QStringLiteral("Failed to unmount %1").arg(pathStr)
+                : QStringLiteral("Unmount failed: %1").arg(err);
+            emit messageEmitted(msg, true);
+        }
     }
 }
 

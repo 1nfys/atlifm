@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--file-manager") == 0) {
             QCoreApplication app(argc, argv);
             QCoreApplication::setApplicationName("atlifm");
-            QCoreApplication::setApplicationVersion("1.0.4");
+            QCoreApplication::setApplicationVersion("1.0.5");
             QCoreApplication::setOrganizationName("atlifm");
             Portal::FileManagerService service;
             return service.start() ? app.exec() : 1;
@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
     }
 
     QCoreApplication::setApplicationName("atlifm");
-    QCoreApplication::setApplicationVersion("1.0.4");
+    QCoreApplication::setApplicationVersion("1.0.5");
     QCoreApplication::setOrganizationName("atlifm");
 
     // омархи ставит gtk тему глобально а мы рисуем все через fusion и свою палитру

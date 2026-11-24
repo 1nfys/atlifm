@@ -593,7 +593,8 @@ void TuiStatusBar::setProgressMessage(const QString& msg, bool isFinished) {
         if (m_messageTimer) {
             m_messageTimer->stop();
         }
-        if (isFinished) {
+        const bool shouldDismiss = isFinished || (!msg.endsWith(QLatin1String("...")) && !msg.endsWith(QStringLiteral("…")));
+        if (shouldDismiss) {
             scheduleMessageDismiss();
         }
     } else {
