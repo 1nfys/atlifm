@@ -16,7 +16,7 @@ source="atlifm-$pkgver-fixed.tar.gz
 # контрольная сумма тарбола: обновляется через 'abuild checksum' после
 # генерации архива скриптом scripts/make-src-tarball.sh
 sha512sums="eba860adc2c7ad54d645a9feeca2e453a36a1df015da92eb1936a714a75cb1d11393a315c013fcc4c86fae716ecfacf193d981f20b9e7bc08136e85de3d48990  atlifm-1.0.5-fixed.tar.gz
-9537329d2aa8ca09cf04908756d519672c1f93d3c652367f18d7313c8ee91876cd53ccad2c9dfed7f3418934b59c1ae5d5fb7d568a1d64432efe3ca3dc5ef515  atlifm.metainfo.xml
+9cb3d11e7e0e605865575918e01ca3f49a698eabddf93d3101c99b28184b7ab0d0ad0b2597db80b8452ab08be1a5f7e7dc1bc661fa22443ef19f0cf3cce989ff  atlifm.metainfo.xml
 4e11b68b0952e5852d287a2aaa916615645734a76786d783c08679441321d17da24ffce9c3d8d8f3f265978a1bea0eebc8369a6dd2e883e3626efc4e473f28e2  atlifm.1"
 
 build() {

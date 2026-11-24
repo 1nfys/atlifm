@@ -96,6 +96,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/atlifm-portal.desktop
 %doc README.md
 
 %changelog
+* Tue Nov 24 2026 1nfys <lifawafla@gmail.com> - 1.0.5-1
+- New upstream release.
+
 * Sat Nov 14 2026 1nfys <lifawafla@gmail.com> - 1.0.4-1
 - New upstream release.
 

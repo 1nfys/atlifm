@@ -13,7 +13,7 @@ source=("atlifm-$pkgver-fixed.tar.gz"
         "atlifm.metainfo.xml"
         "atlifm.1")
 sha256sums=('SKIP'
-            '1ba90e1a2dbcf630725240b769a6a55bbd55d5189084370da9688a839e6eff02'
+            '7a14e510244986dd37234c085229f0a93a4e9a605d8a9f856519455cfd868959'
             '04aa4b983f11c01ef3806717dffaf1cb8204c74601b5455383a35b497528ddfd')
 
 build() {

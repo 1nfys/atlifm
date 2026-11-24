@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.5" date="2026-11-24">
+      <description>
+        <p>symlink display in search results, drive label deduplication, polkit and sudo handling improvements.</p>
+      </description>
+    </release>
     <release version="1.0.4" date="2026-11-14">
       <description>
         <p>file chooser layout refinement, folder selection mode, portal savefiles and unmount actions.</p>
